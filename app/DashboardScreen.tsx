@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, FlatList, Modal, ScrollView, TextInput } from 'react-native';
 import { getProducts, getSchedule, getToday, setOverride } from '@/services/localData';
+import { getCustomerSession } from '@/lib/session';
+import { useFocusEffect } from '@react-navigation/native';
 
 export default function DashboardScreen({ navigation }: { navigation: any }) {
   const defaultMonthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -9,6 +11,8 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
   const [showMonthPicker, setShowMonthPicker] = useState(false);
   const [showYearPicker, setShowYearPicker] = useState(false);
   const [now, setNow] = useState(new Date());
+  const [custName, setCustName] = useState<string>('Customer');
+  const [custPhone, setCustPhone] = useState<string>('');
 
   const products = useMemo(() => getProducts(), []);
   const [rows, setRows] = useState<{ product: { id: string; name: string; pricePerLiter: number }; litersMorning: number; litersEvening: number }[]>([]);
@@ -25,6 +29,32 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
     const id = setInterval(() => setNow(new Date()), 60000);
     return () => clearInterval(id);
   }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const s = await getCustomerSession();
+      if (mounted && s) {
+        setCustName(s.name || 'Customer');
+        setCustPhone(s.phone || '');
+      }
+    })();
+    return () => { mounted = false; };
+  }, []);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      let active = true;
+      (async () => {
+        const s = await getCustomerSession();
+        if (active && s) {
+          setCustName(s.name || 'Customer');
+          setCustPhone(s.phone || '');
+        }
+      })();
+      return () => { active = false; };
+    }, [])
+  );
 
   const refreshToday = () => {
     setRows(getToday(now) as any);
@@ -141,8 +171,8 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
       <View style={styles.userBox}>
         <View style={styles.avatar} />
         <View style={{flex:1}}>
-          <Text style={styles.userName}>Paresh Gami</Text>
-          <Text style={styles.userLocation}>Morbi</Text>
+          <Text style={styles.userName}>{custName}</Text>
+          {!!custPhone && <Text style={styles.userLocation}>{custPhone}</Text>}
         </View>
         <TouchableOpacity style={styles.iconBtn}><Text>📋</Text></TouchableOpacity>
       </View>
