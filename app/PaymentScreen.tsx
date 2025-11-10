@@ -1,9 +1,10 @@
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, FlatList } from 'react-native';
 
 export default function PaymentScreen() {
   // Dummy data for UI only
-  const payments = [
+  type MonthPay = { id: string; month: string; total: number; paid: number; due: number };
+  const base: MonthPay[] = [
     { id: '1', month: 'June 2022', total: 1200, paid: 1200, due: 0 },
     { id: '2', month: 'July 2022', total: 7890, paid: 7890, due: 0 },
     { id: '3', month: 'August 2022', total: 1800, paid: 1440, due: 360 },
@@ -12,10 +13,59 @@ export default function PaymentScreen() {
     { id: '6', month: 'January 2023', total: 900, paid: 540, due: 360 }
   ];
 
+  const monthNamesFull = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const now = new Date();
+  const currentLabel = `${monthNamesFull[now.getMonth()]} ${now.getFullYear()}`;
+  const monthYearMatches = (label: string) => label === currentLabel;
+
+  // This Month only
+  const currentMonthList: MonthPay[] = useMemo(() => base.filter((p: MonthPay) => monthYearMatches(p.month)), []);
+
+  // Yearly history excluding current month, grouped by year
+  const yearsHistory = useMemo(() => {
+    const groups: Record<string, MonthPay[]> = {};
+    base.filter((p: MonthPay) => !monthYearMatches(p.month)).forEach((p: MonthPay) => {
+      const year = p.month.split(' ')[1];
+      if (!groups[year]) groups[year] = [];
+      groups[year].push(p);
+    });
+    return groups;
+  }, []);
+
+  const totalTotal = currentMonthList.reduce((s: number, p: MonthPay) => s + p.total, 0);
+  const totalPaid = currentMonthList.reduce((s: number, p: MonthPay) => s + p.paid, 0);
+  const totalDue = currentMonthList.reduce((s: number, p: MonthPay) => s + p.due, 0);
+
+  const dayNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const headerDate = `${dayNames[now.getDay()]}, ${String(now.getDate()).padStart(2,'0')} ${monthNames[now.getMonth()]} ${now.getFullYear()}`;
+
   return (
     <View style={styles.container}>
+      {/* Today card */}
+      <View style={styles.todayCard}>
+        <Text style={styles.todayDate}>{headerDate}</Text>
+        <View style={styles.todayRow}>
+          <View style={styles.todayBox}>
+            <Text style={styles.todayLabel}>Total</Text>
+            <Text style={styles.todayValue}>{'\u20B9'}{totalTotal}</Text>
+          </View>
+          <View style={styles.todayBox}>
+            <Text style={styles.todayLabel}>Paid</Text>
+            <Text style={styles.todayValue}>{'\u20B9'}{totalPaid}</Text>
+          </View>
+          <View style={styles.todayBox}>
+            <Text style={styles.todayLabel}>Due</Text>
+            <Text style={[styles.todayValue, {color: totalDue > 0 ? '#e53935' : '#4caf50'}]}>{'\u20B9'}{totalDue}</Text>
+          </View>
+        </View>
+      </View>
+
+      {/* This Month */}
+      <Text style={styles.sectionTitle}>This Month · {currentLabel}</Text>
+
       <FlatList
-        data={payments}
+        data={currentMonthList}
         keyExtractor={item => item.id}
         renderItem={({item}) => (
           <View style={styles.row}>
@@ -30,25 +80,59 @@ export default function PaymentScreen() {
             )}
           </View>
         )}
-        ListHeaderComponent={
-          <View style={styles.headerRow}>
-            <Text style={styles.headerCell}>MONTH</Text>
-            <Text style={styles.headerCell}>TOTAL</Text>
-            <Text style={styles.headerCell}>PAID</Text>
-            <Text style={styles.headerCell}>DUE</Text>
-            <Text style={styles.headerCell}></Text>
+        ListFooterComponent={
+          <View style={styles.summary}>
+            <Text style={styles.summaryText}>Total: {'\u20B9'}{totalTotal}</Text>
+            <Text style={styles.summaryText}>Paid: {'\u20B9'}{totalPaid}</Text>
+            <Text style={[styles.summaryText, {color: totalDue > 0 ? '#e53935' : '#1b5e20'}]}>Due: {'\u20B9'}{totalDue}</Text>
           </View>
         }
       />
+
+      {/* Years History */}
+      <Text style={[styles.sectionTitle, {marginTop: 10}]}>Years History</Text>
+      {Object.keys(yearsHistory).sort((a,b)=> Number(b)-Number(a)).map((year: string) => {
+        const list: MonthPay[] = yearsHistory[year];
+        if (!list || list.length === 0) return null;
+        const totals = list.reduce((acc: {t:number; p:number}, m: MonthPay) => { acc.t += m.total; acc.p += m.paid; return acc; }, {t:0, p:0});
+        return (
+          <View key={year} style={{marginBottom: 8}}>
+            <View style={styles.yearHeader}><Text style={styles.yearHeaderText}>{year}</Text><Text style={styles.yearHeaderTextSmall}>Total ₹{totals.t} • Paid ₹{totals.p} • Due ₹{totals.t - totals.p}</Text></View>
+            {list.map((item: MonthPay) => (
+              <View key={item.id} style={styles.row}>
+                <Text style={styles.cell}>{item.month}</Text>
+                <Text style={styles.cell}>{'\u20B9'}{item.total}</Text>
+                <Text style={styles.cell}>{'\u20B9'}{item.paid}</Text>
+                <Text style={[styles.cell, {color: item.due > 0 ? '#e53935' : '#4caf50'}]}>{'\u20B9'}{item.due}</Text>
+                {item.due > 0 && (
+                  <TouchableOpacity style={[styles.payBtn, {backgroundColor: 'rgb(144, 238, 144)'}]}>
+                    <Text style={{color:'#fff'}}>PAY DUE</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            ))}
+          </View>
+        );
+      })}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff', padding: 16 },
+  todayCard: { backgroundColor: '#fff', borderRadius: 12, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: 'rgb(144, 238, 144)' },
+  todayDate: { fontSize: 16, fontWeight: '700', color: '#1b5e20', marginBottom: 8 },
+  todayRow: { flexDirection: 'row', gap: 10 },
+  todayBox: { flex: 1, backgroundColor: '#e8f5e9', borderWidth: 1, borderColor: '#c8e6c9', borderRadius: 10, padding: 10, alignItems: 'center' },
+  todayLabel: { color: '#4f4f4f', fontSize: 12 },
+  todayValue: { color: '#1b5e20', fontWeight: '700', fontSize: 16 },
+  sectionTitle: { fontSize: 16, fontWeight: '700', color: '#1b5e20', marginBottom: 6 },
   row: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 8, padding: 10, marginBottom: 6, borderWidth: 1, borderColor: 'rgb(144, 238, 144)' },
   cell: { flex: 1, textAlign: 'center', fontSize: 15 },
-  headerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
-  headerCell: { flex: 1, textAlign: 'center', fontWeight: 'bold', fontSize: 13 },
   payBtn: { backgroundColor: 'rgb(144, 238, 144)', borderRadius: 8, paddingVertical: 8, paddingHorizontal: 14, marginLeft: 6 },
+  summary: { marginTop: 8, backgroundColor: '#e8f5e9', borderColor: '#c8e6c9', borderWidth: 1, borderRadius: 10, padding: 10, gap: 4 },
+  summaryText: { color: '#1b5e20', fontWeight: '700' },
+  yearHeader: { flexDirection: 'row', justifyContent:'space-between', alignItems:'center', marginBottom: 6 },
+  yearHeaderText: { fontWeight: '700', color: '#1b5e20', fontSize: 15 },
+  yearHeaderTextSmall: { color: '#1b5e20' },
 });

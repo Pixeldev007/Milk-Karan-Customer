@@ -1,11 +1,95 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, FlatList, Modal, ScrollView } from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, FlatList, Modal, ScrollView, TextInput } from 'react-native';
+import { getProducts, getSchedule, getToday, setOverride } from '@/services/localData';
 
 export default function DashboardScreen({ navigation }: { navigation: any }) {
-  const [selectedMonth, setSelectedMonth] = useState('January');
-  const [selectedYear, setSelectedYear] = useState('2023');
+  const defaultMonthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const [selectedMonth, setSelectedMonth] = useState(defaultMonthNames[new Date().getMonth()]);
+  const [selectedYear, setSelectedYear] = useState(String(new Date().getFullYear()));
   const [showMonthPicker, setShowMonthPicker] = useState(false);
   const [showYearPicker, setShowYearPicker] = useState(false);
+  const [now, setNow] = useState(new Date());
+
+  const products = useMemo(() => getProducts(), []);
+  const [rows, setRows] = useState<{ product: { id: string; name: string; pricePerLiter: number }; litersMorning: number; litersEvening: number }[]>([]);
+  const [savedProductId, setSavedProductId] = useState<string | null>(null);
+  const [slotAM, setSlotAM] = useState<boolean>(true);
+  const [slotPM, setSlotPM] = useState<boolean>(false);
+  const dayNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const headerDate = `${dayNames[now.getDay()]}, ${String(now.getDate()).padStart(2,'0')} ${monthNames[now.getMonth()]} ${now.getFullYear()}`;
+  const todayTotalLiters = rows.reduce((s, r) => s + (r.litersMorning || 0) + (r.litersEvening || 0), 0);
+  const todayTotalAmount = rows.reduce((s, r) => s + ((r.litersMorning || 0) + (r.litersEvening || 0)) * (r.product.pricePerLiter || 0), 0);
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 60000);
+    return () => clearInterval(id);
+  }, []);
+
+  const refreshToday = () => {
+    setRows(getToday(now) as any);
+  };
+
+  useEffect(() => {
+    refreshToday();
+  }, [now.toDateString()]);
+
+  useEffect(() => {
+    refreshToday();
+  }, []);
+
+  const setTodayRow = (productId: string, patch: Partial<{ litersMorning: number; litersEvening: number }>) => {
+    setRows(prev => prev.map(r => (r.product.id === productId ? { ...r, ...patch } as any : r)));
+  };
+
+  const saveTodayRow = (productId: string) => {
+    const r = rows.find(x => x.product.id === productId);
+    if (!r) return;
+    setOverride(now, {
+      productId,
+      type: 'adjust',
+      litersMorning: r.litersMorning,
+      litersEvening: r.litersEvening,
+      date: '' as any,
+    } as any);
+    setSavedProductId(productId);
+    refreshToday();
+    setTimeout(() => setSavedProductId(null), 1000);
+  };
+
+  const skipTodayRow = (productId: string) => {
+    setOverride(now, { productId, type: 'skip', date: '' } as any);
+    refreshToday();
+  };
+
+  const resetTodayRow = (productId: string) => {
+    const latest = getSchedule();
+    const base = latest.lines.find(l => l.productId === productId);
+    setOverride(now, {
+      productId,
+      type: 'adjust',
+      litersMorning: base?.litersMorning ?? 0,
+      litersEvening: base?.litersEvening ?? 0,
+      date: '' as any,
+    } as any);
+    refreshToday();
+  };
+
+  
+
+  const placeOrderToday = () => {
+    // Save overrides for today based on selected slots
+    rows.forEach(r => {
+      setOverride(now, {
+        productId: r.product.id,
+        type: 'adjust',
+        litersMorning: slotAM ? (r.litersMorning || 0) : 0,
+        litersEvening: slotPM ? (r.litersEvening || 0) : 0,
+        date: '' as any,
+      } as any);
+    });
+    refreshToday();
+  };
 
   // Dummy data for UI only
   const purchasesData: Record<string, { id: string; item: string; liter: number; price: number; total: number }[]> = {
@@ -46,6 +130,7 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
 
   return (
     <View style={styles.container}>
+      <ScrollView contentContainerStyle={{ paddingBottom: 24 }}>
       <View style={styles.card}>
       {/* Month/Year selectors */}
       <View style={styles.row}>
@@ -61,6 +146,53 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
         </View>
         <TouchableOpacity style={styles.iconBtn}><Text>📋</Text></TouchableOpacity>
       </View>
+      <View style={styles.todayCard}>
+        <View style={styles.todayHeaderRow}>
+          <Text style={styles.todayTitle}>Today's Order</Text>
+          <Text style={styles.dateBadge}>{headerDate}</Text>
+        </View>
+        <View style={styles.slotRow}>
+          <TouchableOpacity style={[styles.slotBtn, slotAM && styles.slotActive]} onPress={() => setSlotAM(s => !s)}><Text style={[styles.slotText, slotAM && styles.slotActiveText]}>Morning</Text></TouchableOpacity>
+          <TouchableOpacity style={[styles.slotBtn, slotPM && styles.slotActive]} onPress={() => setSlotPM(s => !s)}><Text style={[styles.slotText, slotPM && styles.slotActiveText]}>Evening</Text></TouchableOpacity>
+        </View>
+        <View style={styles.todayRows}>
+          {rows.map(r => (
+            <View key={r.product.id} style={styles.todayRow}>
+              <Text style={[styles.todayCell, {flex: 1.4}]}>{r.product.name}</Text>
+              {slotAM && (
+                <View style={{flexDirection:'row', alignItems:'center', gap: 6, flex: 1}}>
+                  <Text style={styles.todayCell}>AM</Text>
+                  <TextInput
+                    value={String(r.litersMorning ?? 0)}
+                    onChangeText={(t) => setTodayRow(r.product.id, { litersMorning: Number(t) || 0 })}
+                    keyboardType="numeric"
+                    style={styles.input}
+                  />
+                </View>
+              )}
+              {slotPM && (
+                <View style={{flexDirection:'row', alignItems:'center', gap: 6, flex: 1}}>
+                  <Text style={styles.todayCell}>PM</Text>
+                  <TextInput
+                    value={String(r.litersEvening ?? 0)}
+                    onChangeText={(t) => setTodayRow(r.product.id, { litersEvening: Number(t) || 0 })}
+                    keyboardType="numeric"
+                    style={styles.input}
+                  />
+                </View>
+              )}
+            </View>
+          ))}
+        </View>
+        <View style={styles.todayFooter}>
+          <Text style={styles.todayTotal}>{todayTotalLiters.toFixed(1)} L • ₹{todayTotalAmount.toFixed(0)}</Text>
+          <View style={{flexDirection:'row', gap: 8}}>
+            <TouchableOpacity style={styles.quickBtn} onPress={placeOrderToday} disabled={!slotAM && !slotPM}><Text style={styles.quickBtnText}>Place Order</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.quickBtn} onPress={() => rows.forEach(r => skipTodayRow(r.product.id))}><Text style={styles.quickBtnText}>Skip All</Text></TouchableOpacity>
+          </View>
+        </View>
+      </View>
+      
       {/* Wallet/Amount */}
       <View style={styles.row}>
         <View style={styles.amountBox}>
@@ -83,6 +215,7 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
       <FlatList
         data={purchases}
         keyExtractor={item => item.id}
+        scrollEnabled={false}
         ListHeaderComponent={
           <View style={styles.headerRow}>
             <Text style={styles.headerCell}>#</Text>
@@ -105,16 +238,17 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
       />
       {/* Action Buttons */}
       <View style={styles.actionRow}>
-        <TouchableOpacity style={styles.actionBtn} onPress={() => navigation.navigate('Milk Order')}><Text style={{color:'#fff'}}>Milk Order</Text></TouchableOpacity>
+        <TouchableOpacity style={styles.actionBtn} onPress={() => navigation.navigate('My Orders')}><Text style={{color:'#fff'}}>My Orders</Text></TouchableOpacity>
         <TouchableOpacity style={styles.actionBtn} onPress={() => navigation.navigate('Payment')}><Text style={{color:'#fff'}}>Do Payment</Text></TouchableOpacity>
         <TouchableOpacity style={styles.actionBtn} onPress={() => navigation.navigate('Transactions')}><Text style={{color:'#fff'}}>Transaction</Text></TouchableOpacity>
       </View>
       {/* Settings */}
-      <View style={styles.settingsBox}>
+      <TouchableOpacity accessibilityRole="button" style={styles.settingsBox} onPress={() => navigation.navigate('Settings')}>
         <Text style={styles.settingsTitle}>Settings</Text>
         <Text style={styles.settingsSubtitle}>Language Change, Logout</Text>
+      </TouchableOpacity>
       </View>
-      </View>
+      </ScrollView>
       <Modal visible={showMonthPicker} transparent animationType="fade">
         <View style={{flex:1, justifyContent:'center', alignItems:'center', backgroundColor:'rgba(0,0,0,0.3)'}}>
           <View style={{backgroundColor:'#fff', borderRadius:10, padding:12, width:'80%', maxHeight:'60%'}}>
@@ -159,6 +293,28 @@ const styles = StyleSheet.create({
   iconBtn: { padding: 10 },
   userName: { fontWeight: 'bold', fontSize: 16 },
   userLocation: { color: '#888' },
+  // Embedded Today & Schedule summary styles
+  todayCard: { backgroundColor: '#fff', borderRadius: 10, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: 'rgb(144, 238, 144)' },
+  todayHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
+  todayTitle: { fontWeight: 'bold', fontSize: 16, color: '#1b5e20' },
+  dateBadge: { backgroundColor: '#e8f5e9', color: '#1b5e20', borderColor: '#c8e6c9', borderWidth: 1, borderRadius: 8, paddingVertical: 4, paddingHorizontal: 8 },
+  todayRows: { marginTop: 6 },
+  todayRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6 },
+  todayCell: { color: '#1b5e20' },
+  todayFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 },
+  todayTotal: { fontWeight: 'bold', color: '#1b5e20' },
+  quickBtn: { backgroundColor: 'rgb(144, 238, 144)', borderRadius: 8, paddingVertical: 8, paddingHorizontal: 12 },
+  quickBtnText: { color: '#fff', fontWeight: 'bold' },
+  slotRow: { flexDirection: 'row', gap: 8, marginTop: 6 },
+  slotBtn: { flex: 1, alignItems: 'center', paddingVertical: 8, borderRadius: 10, borderWidth: 1, borderColor: '#c8e6c9' },
+  slotActive: { backgroundColor: 'rgb(144, 238, 144)', borderColor: 'rgb(144, 238, 144)' },
+  slotText: { color: '#1b5e20', fontWeight: '700' },
+  slotActiveText: { color: '#fff' },
+  input: { flex: 1, minWidth: 60, borderWidth: 1, borderColor: '#c8e6c9', borderRadius: 10, paddingVertical: 8, paddingHorizontal: 10, backgroundColor: '#f9fff9', color: '#1b5e20', textAlign: 'center' },
+  pauseBtn: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 18, borderWidth: 1, borderColor: '#c8e6c9' },
+  pauseBtnActive: { backgroundColor: '#ffb300', borderColor: '#ffb300' },
+  pauseText: { color: '#1b5e20', fontWeight: '700' },
+  pauseTextActive: { color: '#fff' },
   amountBox: { flex: 1, backgroundColor: '#fff', borderRadius: 10, padding: 12, marginHorizontal: 4, alignItems: 'center', borderWidth: 1, borderColor: 'rgb(144, 238, 144)' },
   amountLabel: { color: '#888', fontSize: 12 },
   amountValue: { fontWeight: 'bold', fontSize: 18 },
