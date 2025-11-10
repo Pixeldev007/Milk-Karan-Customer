@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, FlatList, Alert, ScrollView, TextInput } from 'react-native';
-import TodayBadge from '@/components/TodayBadge';
-import { getProducts, getSchedule, getToday, repeatOrder, setOverride } from '@/services/localData';
+import { View, Text, StyleSheet, TouchableOpacity, FlatList, Alert, ScrollView } from 'react-native';
+import { getSchedule, getToday, repeatOrder } from '@/services/localData';
 
 function daysInMonth(year: number, monthIndex: number) {
   return new Date(year, monthIndex + 1, 0).getDate();
@@ -10,8 +9,7 @@ function daysInMonth(year: number, monthIndex: number) {
 export default function MyOrdersScreen() {
   // Today & Schedule data
   const [now, setNow] = useState(new Date());
-  const products = useMemo(() => getProducts(), []);
-  const [rows, setRows] = useState<{ product: { id: string; name: string; pricePerLiter: number }; litersMorning: number; litersEvening: number }[]>([]);
+  // History only; no editable rows here
   
   const dayNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   const monthShort = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -22,26 +20,9 @@ export default function MyOrdersScreen() {
     return () => clearInterval(id);
   }, []);
 
-  const refreshToday = () => setRows(getToday(now) as any);
-  useEffect(() => { refreshToday(); }, [now.toDateString()]);
-  useEffect(() => { refreshToday(); }, []);
+  // No today editor on this screen
 
-  const setTodayRow = (productId: string, patch: Partial<{ litersMorning: number; litersEvening: number }>) => {
-    setRows(prev => prev.map(r => (r.product.id === productId ? { ...r, ...patch } as any : r)));
-  };
-  const saveTodayAll = () => {
-    rows.forEach(r => setOverride(now, { productId: r.product.id, type: 'adjust', litersMorning: r.litersMorning, litersEvening: r.litersEvening, date: '' } as any));
-    refreshToday();
-  };
-  const skipTodayAll = () => {
-    rows.forEach(r => setOverride(now, { productId: r.product.id, type: 'skip', date: '' } as any));
-    refreshToday();
-  };
-  const resetTodayAll = () => {
-    const latest = getSchedule();
-    latest.lines.forEach(l => setOverride(now, { productId: l.productId, type: 'adjust', litersMorning: l.litersMorning || 0, litersEvening: l.litersEvening || 0, date: '' } as any));
-    refreshToday();
-  };
+  // No today editor actions here
 
   
 
@@ -104,34 +85,7 @@ export default function MyOrdersScreen() {
   return (
     <View style={styles.container}>
       <ScrollView contentContainerStyle={{ paddingBottom: 24 }}>
-      <TodayBadge />
-      {/* Today Editor */}
-      <View style={styles.card}>
-        <View style={styles.todayHeaderRow}>
-          <Text style={styles.todayTitle}>Today's Order</Text>
-          <Text style={styles.dateBadge}>{headerDate}</Text>
-        </View>
-        {rows.map(r => (
-          <View key={r.product.id} style={styles.todayRow}>
-            <Text style={[styles.todayCell, {flex: 1.4}]}>{r.product.name}</Text>
-            <View style={{flexDirection:'row', alignItems:'center', gap: 6, flex: 1}}>
-              <Text style={styles.todayCell}>AM</Text>
-              <TextInput value={String(r.litersMorning || 0)} onChangeText={(t)=>setTodayRow(r.product.id,{litersMorning:Number(t)||0})} keyboardType="numeric" style={styles.input} />
-            </View>
-            <View style={{flexDirection:'row', alignItems:'center', gap: 6, flex: 1}}>
-              <Text style={styles.todayCell}>PM</Text>
-              <TextInput value={String(r.litersEvening || 0)} onChangeText={(t)=>setTodayRow(r.product.id,{litersEvening:Number(t)||0})} keyboardType="numeric" style={styles.input} />
-            </View>
-          </View>
-        ))}
-        <View style={styles.todayFooter}>
-          <View style={{flexDirection:'row', gap: 8}}>
-            <TouchableOpacity style={styles.quickBtn} onPress={saveTodayAll}><Text style={styles.quickBtnText}>Save</Text></TouchableOpacity>
-            <TouchableOpacity style={styles.quickBtn} onPress={skipTodayAll}><Text style={styles.quickBtnText}>Skip Today</Text></TouchableOpacity>
-            <TouchableOpacity style={styles.quickBtn} onPress={resetTodayAll}><Text style={styles.quickBtnText}>Reset</Text></TouchableOpacity>
-          </View>
-        </View>
-      </View>
+      {/* History only; no today's editor here */}
       
       {/* Month/Year Filter moved below Schedule */}
       <View style={styles.header}>
@@ -143,17 +97,21 @@ export default function MyOrdersScreen() {
         <Text style={styles.summaryText}>Total: {monthlyTotals.liters.toFixed(1)} L</Text>
         <Text style={styles.summaryText}>Est. ₹{monthlyTotals.amount.toFixed(0)}</Text>
       </View>
-      <View>
+      <View style={styles.listContainer}>
         {items.length === 0 ? (
           <Text style={{textAlign:'center', marginTop: 20, color:'#666'}}>No history for this month.</Text>
         ) : (
           items.map((item) => (
-            <View key={item.key} style={styles.row}>
-              <Text style={styles.cell}>{item.label}</Text>
-              <Text style={[styles.cell, {flex: 0.8}]}>{item.totalLiters > 0 ? `${item.totalLiters.toFixed(1)} L` : 'No order'}</Text>
-              <TouchableOpacity style={styles.repeatBtn} onPress={() => handleRepeatForToday(item.date)}>
-                <Text style={styles.repeatText}>Repeat today</Text>
-              </TouchableOpacity>
+            <View key={item.key} style={styles.dayCard}>
+              <View style={styles.dayHeader}>
+                <Text style={styles.dayTitle}>{item.label}</Text>
+                <Text style={styles.dayLiters}>{item.totalLiters > 0 ? `${item.totalLiters.toFixed(1)} L` : 'No order'}</Text>
+              </View>
+              <View style={styles.dayActions}>
+                <TouchableOpacity style={styles.repeatBtn} onPress={() => handleRepeatForToday(item.date)}>
+                  <Text style={styles.repeatText}>Repeat for Today</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           ))
         )}
@@ -165,6 +123,7 @@ export default function MyOrdersScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff', padding: 16 },
+  listContainer: { paddingTop: 4 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
   navBtn: { fontSize: 18, color: '#2e7d32', fontWeight: '700', paddingHorizontal: 8 },
   title: { fontSize: 18, fontWeight: '700', color: '#1b5e20' },
@@ -182,6 +141,12 @@ const styles = StyleSheet.create({
   summaryText: { color: '#1b5e20', fontWeight: '700' },
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#fff', borderWidth: 1, borderColor: 'rgb(144, 238, 144)', borderRadius: 10, padding: 10, marginBottom: 8 },
   cell: { flex: 1, color: '#1b5e20' },
+  dayCard: { backgroundColor: '#fff', borderWidth: 1, borderColor: 'rgb(144, 238, 144)', borderRadius: 12, padding: 12, marginBottom: 10, shadowColor: '#000', shadowOpacity: 0.05, shadowOffset: { width: 0, height: 2 }, shadowRadius: 6, elevation: 2 },
+  dayHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  dayTitle: { fontWeight: '700', color: '#1b5e20', fontSize: 15 },
+  dayLiters: { fontWeight: '700', color: '#1b5e20' },
+  dayActions: { alignItems: 'flex-end' },
   repeatBtn: { backgroundColor: 'rgb(144, 238, 144)', borderRadius: 8, paddingVertical: 8, paddingHorizontal: 12 },
   repeatText: { color: '#fff', fontWeight: '700' },
-});
+})
+;

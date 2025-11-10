@@ -3,14 +3,33 @@ import { View, Text, StyleSheet, TouchableOpacity, FlatList } from 'react-native
 
 export default function PaymentScreen() {
   // Dummy data for UI only
-  type MonthPay = { id: string; month: string; total: number; paid: number; due: number };
+  type MonthItem = { id: string; type: 'Cow' | 'Buffalo' | 'Goat'; liters: number; rate: number };
+  type MonthPay = { id: string; month: string; items: MonthItem[]; total: number; paid: number; due: number };
   const base: MonthPay[] = [
-    { id: '1', month: 'June 2022', total: 1200, paid: 1200, due: 0 },
-    { id: '2', month: 'July 2022', total: 7890, paid: 7890, due: 0 },
-    { id: '3', month: 'August 2022', total: 1800, paid: 1440, due: 360 },
-    { id: '4', month: 'September 2022', total: 180, paid: 0, due: 180 },
-    { id: '5', month: 'October 2022', total: 180, paid: 0, due: 180 },
-    { id: '6', month: 'January 2023', total: 900, paid: 540, due: 360 }
+    { id: '1', month: 'June 2022', items: [
+      { id: 'i1', type: 'Cow', liters: 10, rate: 80 },
+      { id: 'i2', type: 'Buffalo', liters: 5, rate: 90 },
+    ], total: 10*80 + 5*90, paid: 10*80 + 5*90, due: 0 },
+    { id: '2', month: 'July 2022', items: [
+      { id: 'i1', type: 'Cow', liters: 50, rate: 80 },
+      { id: 'i2', type: 'Buffalo', liters: 38, rate: 90 },
+      { id: 'i3', type: 'Goat', liters: 0.5, rate: 550 },
+    ], total: 50*80 + 38*90 + 0.5*550, paid: 50*80 + 38*90 + 0.5*550, due: 0 },
+    { id: '3', month: 'August 2022', items: [
+      { id: 'i1', type: 'Cow', liters: 10, rate: 80 },
+      { id: 'i2', type: 'Buffalo', liters: 10, rate: 90 },
+      { id: 'i3', type: 'Goat', liters: 1, rate: 550 },
+    ], total: 10*80 + 10*90 + 1*550, paid: 1440, due: (10*80 + 10*90 + 1*550) - 1440 },
+    { id: '4', month: 'September 2022', items: [
+      { id: 'i1', type: 'Cow', liters: 2, rate: 80 },
+    ], total: 2*80, paid: 0, due: 2*80 },
+    { id: '5', month: 'October 2022', items: [
+      { id: 'i1', type: 'Buffalo', liters: 2, rate: 90 },
+    ], total: 2*90, paid: 0, due: 2*90 },
+    { id: '6', month: 'January 2023', items: [
+      { id: 'i1', type: 'Cow', liters: 5, rate: 80 },
+      { id: 'i2', type: 'Goat', liters: 0.5, rate: 550 },
+    ], total: 5*80 + 0.5*550, paid: 540, due: (5*80 + 0.5*550) - 540 }
   ];
 
   const monthNamesFull = ['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -63,16 +82,21 @@ export default function PaymentScreen() {
 
       {/* This Month */}
       <Text style={styles.sectionTitle}>This Month · {currentLabel}</Text>
-
       <FlatList
         data={currentMonthList}
         keyExtractor={item => item.id}
         renderItem={({item}) => (
-          <View style={styles.row}>
-            <Text style={styles.cell}>{item.month}</Text>
-            <Text style={styles.cell}>{'\u20B9'}{item.total}</Text>
-            <Text style={styles.cell}>{'\u20B9'}{item.paid}</Text>
-            <Text style={[styles.cell, {color: item.due > 0 ? '#e53935' : '#4caf50'}]}>{'\u20B9'}{item.due}</Text>
+          <View style={styles.monthBox}>
+            <Text style={styles.monthTitle}>{item.month}</Text>
+            {item.items.map((it) => (
+              <View key={it.id} style={styles.monthRow}>
+                <Text style={styles.monthCell}>{it.type}</Text>
+                <Text style={styles.monthCellVal}>{it.liters} L × ₹{it.rate} = ₹{(it.liters * it.rate).toFixed(0)}</Text>
+              </View>
+            ))}
+            <View style={styles.monthRow}><Text style={styles.monthCell}>Total</Text><Text style={styles.monthCellVal}>{'\u20B9'}{item.total.toFixed(0)}</Text></View>
+            <View style={styles.monthRow}><Text style={styles.monthCell}>Paid</Text><Text style={styles.monthCellVal}>{'\u20B9'}{item.paid.toFixed(0)}</Text></View>
+            <View style={styles.monthRow}><Text style={styles.monthCell}>Due</Text><Text style={[styles.monthCellVal, {color: item.due > 0 ? '#e53935' : '#4caf50'}]}>{'\u20B9'}{item.due.toFixed(0)}</Text></View>
             {item.due > 0 && (
               <TouchableOpacity style={[styles.payBtn, {backgroundColor: 'rgb(144, 238, 144)'}]}>
                 <Text style={{color:'#fff'}}>PAY DUE</Text>
@@ -97,13 +121,19 @@ export default function PaymentScreen() {
         const totals = list.reduce((acc: {t:number; p:number}, m: MonthPay) => { acc.t += m.total; acc.p += m.paid; return acc; }, {t:0, p:0});
         return (
           <View key={year} style={{marginBottom: 8}}>
-            <View style={styles.yearHeader}><Text style={styles.yearHeaderText}>{year}</Text><Text style={styles.yearHeaderTextSmall}>Total ₹{totals.t} • Paid ₹{totals.p} • Due ₹{totals.t - totals.p}</Text></View>
+            <View style={styles.yearHeader}><Text style={styles.yearHeaderText}>{year}</Text><Text style={styles.yearHeaderTextSmall}>Total ₹{totals.t.toFixed(0)} • Paid ₹{totals.p.toFixed(0)} • Due ₹{(totals.t - totals.p).toFixed(0)}</Text></View>
             {list.map((item: MonthPay) => (
-              <View key={item.id} style={styles.row}>
-                <Text style={styles.cell}>{item.month}</Text>
-                <Text style={styles.cell}>{'\u20B9'}{item.total}</Text>
-                <Text style={styles.cell}>{'\u20B9'}{item.paid}</Text>
-                <Text style={[styles.cell, {color: item.due > 0 ? '#e53935' : '#4caf50'}]}>{'\u20B9'}{item.due}</Text>
+              <View key={item.id} style={styles.monthBox}>
+                <Text style={styles.monthTitle}>{item.month}</Text>
+                {item.items.map((it) => (
+                  <View key={it.id} style={styles.monthRow}>
+                    <Text style={styles.monthCell}>{it.type}</Text>
+                    <Text style={styles.monthCellVal}>{it.liters} L × ₹{it.rate} = ₹{(it.liters * it.rate).toFixed(0)}</Text>
+                  </View>
+                ))}
+                <View style={styles.monthRow}><Text style={styles.monthCell}>Total</Text><Text style={styles.monthCellVal}>{'\u20B9'}{item.total.toFixed(0)}</Text></View>
+                <View style={styles.monthRow}><Text style={styles.monthCell}>Paid</Text><Text style={styles.monthCellVal}>{'\u20B9'}{item.paid.toFixed(0)}</Text></View>
+                <View style={styles.monthRow}><Text style={styles.monthCell}>Due</Text><Text style={[styles.monthCellVal, {color: item.due > 0 ? '#e53935' : '#4caf50'}]}>{'\u20B9'}{item.due.toFixed(0)}</Text></View>
                 {item.due > 0 && (
                   <TouchableOpacity style={[styles.payBtn, {backgroundColor: 'rgb(144, 238, 144)'}]}>
                     <Text style={{color:'#fff'}}>PAY DUE</Text>
@@ -127,6 +157,11 @@ const styles = StyleSheet.create({
   todayLabel: { color: '#4f4f4f', fontSize: 12 },
   todayValue: { color: '#1b5e20', fontWeight: '700', fontSize: 16 },
   sectionTitle: { fontSize: 16, fontWeight: '700', color: '#1b5e20', marginBottom: 6 },
+  monthBox: { backgroundColor: '#fff', borderRadius: 10, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: 'rgb(144, 238, 144)' },
+  monthTitle: { fontWeight: '700', color: '#1b5e20', marginBottom: 8 },
+  monthRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 },
+  monthCell: { color: '#4f4f4f' },
+  monthCellVal: { color: '#1b5e20', fontWeight: '700' },
   row: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 8, padding: 10, marginBottom: 6, borderWidth: 1, borderColor: 'rgb(144, 238, 144)' },
   cell: { flex: 1, textAlign: 'center', fontSize: 15 },
   payBtn: { backgroundColor: 'rgb(144, 238, 144)', borderRadius: 8, paddingVertical: 8, paddingHorizontal: 14, marginLeft: 6 },

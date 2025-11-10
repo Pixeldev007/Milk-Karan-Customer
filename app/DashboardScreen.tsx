@@ -23,7 +23,19 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
   const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   const headerDate = `${dayNames[now.getDay()]}, ${String(now.getDate()).padStart(2,'0')} ${monthNames[now.getMonth()]} ${now.getFullYear()}`;
   const todayTotalLiters = rows.reduce((s, r) => s + (r.litersMorning || 0) + (r.litersEvening || 0), 0);
-  const todayTotalAmount = rows.reduce((s, r) => s + ((r.litersMorning || 0) + (r.litersEvening || 0)) * (r.product.pricePerLiter || 0), 0);
+  const priceFor = (name: string) => {
+    const n = (name || '').toLowerCase();
+    if (n.includes('goat')) return 550;
+    if (n.includes('buffalo')) return 90;
+    if (n.includes('cow')) return 80;
+    return 0;
+  };
+  const todayTotalAmount = rows.reduce((s, r) => {
+    const liters = (r.litersMorning || 0) + (r.litersEvening || 0);
+    return s + liters * priceFor(r.product.name);
+  }, 0);
+  const [lastPlacedAmount, setLastPlacedAmount] = useState<number>(0);
+  const [placedItems, setPlacedItems] = useState<{ id: string; item: string; liter: number; price: number; total: number }[]>([]);
 
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 60000);
@@ -119,18 +131,27 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
       } as any);
     });
     refreshToday();
+    const placedTotal = rows.reduce((s, r) => {
+      const liters = (slotAM ? (r.litersMorning || 0) : 0) + (slotPM ? (r.litersEvening || 0) : 0);
+      return s + liters * priceFor(r.product.name);
+    }, 0);
+    setLastPlacedAmount(placedTotal);
+
+    // Build placed items list for display in table
+    const items = rows
+      .map((r, idx) => {
+        const liters = (slotAM ? (r.litersMorning || 0) : 0) + (slotPM ? (r.litersEvening || 0) : 0);
+        const price = priceFor(r.product.name);
+        const total = liters * price;
+        return { id: String(idx + 1), item: r.product.name, liter: liters, price, total };
+      })
+      .filter(x => x.liter > 0);
+    setPlacedItems(items);
   };
 
-  // Dummy data for UI only
-  const purchasesData: Record<string, { id: string; item: string; liter: number; price: number; total: number }[]> = {
-    'January-2023': [{ id: '1', item: 'BUFFALO MILK', liter: 6, price: 60, total: 360 }],
-    'February-2023': [{ id: '1', item: 'BUFFALO MILK', liter: 3, price: 60, total: 180 }],
-    'March-2023': [],
-  };
+  // Placed purchases list
   const months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
   const years = ['2022','2023','2024','2025'];
-  const key = `${selectedMonth}-${selectedYear}`;
-  const purchases = purchasesData[key] ?? [];
 
   const goPrevMonth = () => {
     const idx = months.indexOf(selectedMonth);
@@ -226,24 +247,19 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
       {/* Wallet/Amount */}
       <View style={styles.row}>
         <View style={styles.amountBox}>
-          <Text style={styles.amountLabel}>Wallet Amount</Text>
+          <Text style={styles.amountLabel}>Due Fees</Text>
           <Text style={styles.amountValue}>₹170.00</Text>
           <TouchableOpacity onPress={() => navigation.navigate('Payment')}><Text style={styles.link}>View</Text></TouchableOpacity>
         </View>
         <View style={styles.amountBox}>
-          <Text style={styles.amountLabel}>January - 2023</Text>
-          <Text style={styles.amountValue}>₹360</Text>
+          <Text style={styles.amountLabel}>Today's Total</Text>
+          <Text style={styles.amountValue}>₹{(lastPlacedAmount || todayTotalAmount).toFixed(0)}</Text>
           <TouchableOpacity onPress={() => navigation.navigate('Transactions')}><Text style={styles.link}>View</Text></TouchableOpacity>
         </View>
       </View>
       {/* Purchases Table */}
-      <View style={styles.navRow}>
-        <TouchableOpacity onPress={goPrevMonth}><Text style={styles.navBtn}>◀ PREV</Text></TouchableOpacity>
-        <Text style={styles.sectionTitle}>{selectedMonth} {selectedYear} Purchase</Text>
-        <TouchableOpacity onPress={goNextMonth}><Text style={styles.navBtn}>NEXT ▶</Text></TouchableOpacity>
-      </View>
       <FlatList
-        data={purchases}
+        data={placedItems}
         keyExtractor={item => item.id}
         scrollEnabled={false}
         ListHeaderComponent={
@@ -255,22 +271,25 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
             <Text style={styles.headerCell}>TOTAL (₹)</Text>
           </View>
         }
-        renderItem={({item}) => (
+        renderItem={({item, index}) => (
           <View style={styles.purchaseRow}>
-            <Text style={styles.purchaseCell}>1</Text>
+            <Text style={styles.purchaseCell}>{index + 1}</Text>
             <Text style={styles.purchaseCell}>{item.item}</Text>
             <Text style={styles.purchaseCell}>{item.liter}</Text>
             <Text style={styles.purchaseCell}>₹{item.price}</Text>
             <Text style={styles.purchaseCell}>₹{item.total}</Text>
           </View>
         )}
-        ListFooterComponent={<Text style={styles.finalTotal}>FINAL TOTAL  ₹360</Text>}
+        ListFooterComponent={<Text style={styles.finalTotal}>FINAL TOTAL  ₹{(placedItems.reduce((s, i) => s + i.total, 0)).toFixed(0)}</Text>}
       />
       {/* Action Buttons */}
       <View style={styles.actionRow}>
-        <TouchableOpacity style={styles.actionBtn} onPress={() => navigation.navigate('My Orders')}><Text style={{color:'#fff'}}>My Orders</Text></TouchableOpacity>
-        <TouchableOpacity style={styles.actionBtn} onPress={() => navigation.navigate('Payment')}><Text style={{color:'#fff'}}>Do Payment</Text></TouchableOpacity>
-        <TouchableOpacity style={styles.actionBtn} onPress={() => navigation.navigate('Transactions')}><Text style={{color:'#fff'}}>Transaction</Text></TouchableOpacity>
+        <TouchableOpacity style={styles.actionBtn} onPress={() => navigation.navigate('Payment')}>
+          <Text style={{color:'#fff'}}>Pay Now</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.actionBtn} onPress={() => navigation.navigate('Payment')}>
+          <Text style={{color:'#fff'}}>Pay on Monthly Plan</Text>
+        </TouchableOpacity>
       </View>
       {/* Settings */}
       <TouchableOpacity accessibilityRole="button" style={styles.settingsBox} onPress={() => navigation.navigate('Settings')}>

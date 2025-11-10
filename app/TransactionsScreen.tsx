@@ -3,14 +3,33 @@ import { View, Text, StyleSheet, FlatList, TouchableOpacity, ScrollView } from '
 
 export default function TransactionsScreen() {
   // Dummy data for UI only
-  type MonthTxn = { id: string; month: string; purchased: number; paid: number };
+  type MonthItem = { id: string; type: 'Cow' | 'Buffalo' | 'Goat'; liters: number; rate: number };
+  type MonthTxn = { id: string; month: string; items: MonthItem[]; purchased: number; paid: number };
   const base: MonthTxn[] = [
-    { id: '1', month: 'June 2022', purchased: 1200, paid: 1200 },
-    { id: '2', month: 'July 2022', purchased: 7890, paid: 7890 },
-    { id: '3', month: 'August 2022', purchased: 1800, paid: 1440 },
-    { id: '4', month: 'September 2022', purchased: 180, paid: 0 },
-    { id: '5', month: 'October 2022', purchased: 180, paid: 0 },
-    { id: '6', month: 'January 2023', purchased: 900, paid: 0 }
+    { id: '1', month: 'June 2022', items: [
+      { id: 'i1', type: 'Cow', liters: 10, rate: 80 },
+      { id: 'i2', type: 'Buffalo', liters: 5, rate: 90 },
+    ], purchased: 10*80 + 5*90, paid: 10*80 + 5*90 },
+    { id: '2', month: 'July 2022', items: [
+      { id: 'i1', type: 'Cow', liters: 50, rate: 80 },
+      { id: 'i2', type: 'Buffalo', liters: 38, rate: 90 },
+      { id: 'i3', type: 'Goat', liters: 0.5, rate: 550 },
+    ], purchased: 50*80 + 38*90 + 0.5*550, paid: 50*80 + 38*90 + 0.5*550 },
+    { id: '3', month: 'August 2022', items: [
+      { id: 'i1', type: 'Cow', liters: 10, rate: 80 },
+      { id: 'i2', type: 'Buffalo', liters: 10, rate: 90 },
+      { id: 'i3', type: 'Goat', liters: 1, rate: 550 },
+    ], purchased: 10*80 + 10*90 + 1*550, paid: 1440 },
+    { id: '4', month: 'September 2022', items: [
+      { id: 'i1', type: 'Cow', liters: 2, rate: 80 },
+    ], purchased: 2*80, paid: 0 },
+    { id: '5', month: 'October 2022', items: [
+      { id: 'i1', type: 'Buffalo', liters: 2, rate: 90 },
+    ], purchased: 2*90, paid: 0 },
+    { id: '6', month: 'January 2023', items: [
+      { id: 'i1', type: 'Cow', liters: 5, rate: 80 },
+      { id: 'i2', type: 'Goat', liters: 0.5, rate: 550 },
+    ], purchased: 5*80 + 0.5*550, paid: 0 }
   ];
   const [filter, setFilter] = useState<'all' | 'paid' | 'due'>('all');
   const monthNamesFull = ['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -113,13 +132,20 @@ export default function TransactionsScreen() {
         const totals = list.reduce((acc: {p:number; r:number}, m: MonthTxn) => { acc.p += m.purchased; acc.r += m.paid; return acc; }, {p:0, r:0});
         return (
           <View key={year} style={{marginBottom: 8}}>
-            <View style={styles.yearHeader}><Text style={styles.yearHeaderText}>{year}</Text><Text style={styles.yearHeaderTextSmall}>Purchased ₹{totals.p} • Paid ₹{totals.r} • Due ₹{totals.p - totals.r}</Text></View>
+            <View style={styles.yearHeader}><Text style={styles.yearHeaderText}>{year}</Text><Text style={styles.yearHeaderTextSmall}>Purchased ₹{totals.p.toFixed(0)} • Paid ₹{totals.r.toFixed(0)} • Due ₹{(totals.p - totals.r).toFixed(0)}</Text></View>
             {list.map((item: MonthTxn) => (
               <View key={item.id} style={styles.monthBox}>
                 <Text style={styles.monthTitle}>{item.month}</Text>
-                <View style={styles.monthRow}><Text style={styles.monthCell}>Purchased</Text><Text style={styles.monthCellVal}>{'\u20B9'}{item.purchased}</Text></View>
-                <View style={styles.monthRow}><Text style={styles.monthCell}>Paid</Text><Text style={styles.monthCellVal}>{'\u20B9'}{item.paid}</Text></View>
-                <View style={styles.monthRow}><Text style={styles.monthCell}>Due</Text><Text style={[styles.monthCellVal, {color: (item.purchased-item.paid) > 0 ? '#e53935' : '#4caf50'}]}>{'\u20B9'}{item.purchased - item.paid}</Text></View>
+                {/* Itemized per milk type */}
+                {item.items.map((it) => (
+                  <View key={it.id} style={styles.monthRow}>
+                    <Text style={styles.monthCell}>{it.type}</Text>
+                    <Text style={styles.monthCellVal}>{it.liters} L × ₹{it.rate} = ₹{(it.liters * it.rate).toFixed(0)}</Text>
+                  </View>
+                ))}
+                <View style={styles.monthRow}><Text style={styles.monthCell}>Purchased</Text><Text style={styles.monthCellVal}>{'\u20B9'}{item.purchased.toFixed(0)}</Text></View>
+                <View style={styles.monthRow}><Text style={styles.monthCell}>Paid</Text><Text style={styles.monthCellVal}>{'\u20B9'}{item.paid.toFixed(0)}</Text></View>
+                <View style={styles.monthRow}><Text style={styles.monthCell}>Due</Text><Text style={[styles.monthCellVal, {color: (item.purchased-item.paid) > 0 ? '#e53935' : '#4caf50'}]}>{'\u20B9'}{(item.purchased - item.paid).toFixed(0)}</Text></View>
               </View>
             ))}
           </View>
