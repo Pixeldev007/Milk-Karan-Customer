@@ -1,9 +1,10 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, FlatList, ActivityIndicator, BackHandler } from 'react-native';
-import { supabase } from '@/lib/supabase';
-import { getCustomerSession } from '@/lib/session';
 import { getCustomerId } from '@/lib/customers';
+import { listCustomerDeliveries } from '@/lib/dailyDeliveries';
+import { getCustomerSession } from '@/lib/session';
+import { supabase } from '@/lib/supabase';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import React, { useCallback, useEffect, useState } from 'react';
+import { ActivityIndicator, BackHandler, FlatList, Text, View } from 'react-native';
 
 type OrderRow = {
   date: string;
@@ -20,6 +21,7 @@ export default function MyOrdersScreen() {
   const [loading, setLoading] = useState(false);
   const [customerId, setCustomerId] = useState<string | null>(null);
   const navigation = useNavigation<any>();
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -34,29 +36,12 @@ export default function MyOrdersScreen() {
     if (!customerId) return;
     setLoading(true);
     try {
-      const { data, error } = await supabase.rpc('get_customer_orders_detailed', {
-        p_customer_id: customerId,
-        p_from: null,
-        p_to: null,
-      });
-      if (error) throw error;
-      setRows((data ?? []).map((r: any) => {
-        const rawShift = (r.shift ?? '').toString().toLowerCase();
-        const normalizedShift: 'morning' | 'evening' = rawShift.includes('even') || rawShift.includes('pm') ? 'evening' : 'morning';
-        return {
-          date: r.date,
-          shift: normalizedShift,
-          liters: Number(r.liters ?? 0),
-          delivered: !!r.delivered,
-          delivered_at: r.delivered_at ?? null,
-          delivery_agent_name: r.delivery_agent_name ?? null,
-          delivery_agent_phone: r.delivery_agent_phone ?? null,
-        };
-      }));
+      const data = await listCustomerDeliveries({ customerId, date: selectedDate });
+      setRows(data as any);
     } finally {
       setLoading(false);
     }
-  }, [customerId]);
+  }, [customerId, selectedDate]);
 
   useEffect(() => {
     loadOrders();
