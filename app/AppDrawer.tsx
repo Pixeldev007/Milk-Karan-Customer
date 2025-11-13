@@ -20,10 +20,10 @@ export default function AppDrawer() {
       }}
       drawerContent={props => <CustomDrawerContent {...props} />}
     >
-      <Drawer.Screen name="My Orders" component={MyOrdersScreen} />
       <Drawer.Screen name="Dashboard" component={DashboardScreen} options={{ headerTitle: '' }} />
-      <Drawer.Screen name="Transactions" component={TransactionsScreen} />
-      <Drawer.Screen name="Payment" component={PaymentScreen} />
+      <Drawer.Screen name="My Orders" component={MyOrdersScreen} options={{ drawerItemStyle: { display: 'none' } }} />
+      <Drawer.Screen name="Transactions" component={TransactionsScreen} options={{ drawerItemStyle: { display: 'none' } }} />
+      <Drawer.Screen name="Payment" component={PaymentScreen} options={{ drawerItemStyle: { display: 'none' } }} />
       <Drawer.Screen name="Settings" component={SettingsScreen} />
     </Drawer.Navigator>
   );

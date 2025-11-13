@@ -1,55 +1,40 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, FlatList, Modal, ScrollView, TextInput } from 'react-native';
-import { getProducts, getSchedule, getToday, setOverride } from '@/services/localData';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { View, Text, ActivityIndicator, RefreshControl, ScrollView, TouchableOpacity, StyleSheet } from 'react-native';
+
 import { getCustomerSession } from '@/lib/session';
-import { useFocusEffect } from '@react-navigation/native';
+import { getCustomerId } from '@/lib/customers';
+import { supabase } from '@/lib/supabase';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 
-export default function DashboardScreen({ navigation }: { navigation: any }) {
-  const defaultMonthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-  const [selectedMonth, setSelectedMonth] = useState(defaultMonthNames[new Date().getMonth()]);
-  const [selectedYear, setSelectedYear] = useState(String(new Date().getFullYear()));
-  const [showMonthPicker, setShowMonthPicker] = useState(false);
-  const [showYearPicker, setShowYearPicker] = useState(false);
-  const [now, setNow] = useState(new Date());
-  const [custName, setCustName] = useState<string>('Customer');
-  const [custPhone, setCustPhone] = useState<string>('');
+type ShiftRow = {
+  date: string;
+  shift: 'morning' | 'evening';
+  liters: number;
+  delivered: boolean;
+  delivered_at: string | null;
+  delivery_agent_id: string | null;
+  delivery_agent_name: string | null;
+  delivery_agent_phone: string | null;
+};
 
-  const products = useMemo(() => getProducts(), []);
-  const [rows, setRows] = useState<{ product: { id: string; name: string; pricePerLiter: number }; litersMorning: number; litersEvening: number }[]>([]);
-  const [savedProductId, setSavedProductId] = useState<string | null>(null);
-  const [slotAM, setSlotAM] = useState<boolean>(true);
-  const [slotPM, setSlotPM] = useState<boolean>(false);
-  const dayNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-  const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  const headerDate = `${dayNames[now.getDay()]}, ${String(now.getDate()).padStart(2,'0')} ${monthNames[now.getMonth()]} ${now.getFullYear()}`;
-  const todayTotalLiters = rows.reduce((s, r) => s + (r.litersMorning || 0) + (r.litersEvening || 0), 0);
-  const priceFor = (name: string) => {
-    const n = (name || '').toLowerCase();
-    if (n.includes('goat')) return 550;
-    if (n.includes('buffalo')) return 90;
-    if (n.includes('cow')) return 80;
-    return 0;
-  };
-  const todayTotalAmount = rows.reduce((s, r) => {
-    const liters = (r.litersMorning || 0) + (r.litersEvening || 0);
-    return s + liters * priceFor(r.product.name);
-  }, 0);
-  const [lastPlacedAmount, setLastPlacedAmount] = useState<number>(0);
-  const [placedItems, setPlacedItems] = useState<{ id: string; item: string; liter: number; price: number; total: number }[]>([]);
-
-  useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), 60000);
-    return () => clearInterval(id);
-  }, []);
+export default function DashboardScreen() {
+  const navigation = useNavigation<any>();
+  const [customerId, setCustomerId] = useState<string | null>(null);
+  const [rows, setRows] = useState<ShiftRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     let mounted = true;
     (async () => {
-      const s = await getCustomerSession();
-      if (mounted && s) {
-        setCustName(s.name || 'Customer');
-        setCustPhone(s.phone || '');
+      const session = await getCustomerSession();
+      if (!mounted) return;
+      if (!session?.phone) {
+        setCustomerId(null);
+        return;
       }
+      const id = await getCustomerId(session.name, session.phone);
+      if (mounted) setCustomerId(id);
     })();
     return () => { mounted = false; };
   }, []);
@@ -58,327 +43,228 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
     React.useCallback(() => {
       let active = true;
       (async () => {
-        const s = await getCustomerSession();
-        if (active && s) {
-          setCustName(s.name || 'Customer');
-          setCustPhone(s.phone || '');
+        const session = await getCustomerSession();
+        if (!active) return;
+        if (!session?.phone) {
+          setCustomerId(null);
+          return;
         }
+        const id = await getCustomerId(session.name, session.phone);
+        if (active) setCustomerId(id);
       })();
       return () => { active = false; };
     }, [])
   );
 
-  const refreshToday = () => {
-    setRows(getToday(now) as any);
-  };
+  const loadDay = useCallback(async () => {
+    if (!customerId) {
+      setRows([]);
+      return;
+    }
+    setLoading(true);
+    try {
+      const { data, error } = await supabase.rpc('get_customer_day_details', {
+        p_customer_id: customerId,
+        p_date: null,
+      });
+      if (error) throw error;
+      setRows((data ?? []).map((r: any) => ({
+        date: r.date,
+        shift: r.shift,
+        liters: Number(r.liters ?? 0),
+        delivered: !!r.delivered,
+        delivered_at: r.delivered_at ?? null,
+        delivery_agent_id: r.delivery_agent_id ?? null,
+        delivery_agent_name: r.delivery_agent_name ?? null,
+        delivery_agent_phone: r.delivery_agent_phone ?? null,
+      })));
+    } catch (error) {
+      console.error('get_customer_day_details error', error);
+      setRows([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [customerId]);
 
   useEffect(() => {
-    refreshToday();
-  }, [now.toDateString()]);
+    if (!customerId) {
+      setRows([]);
+      return;
+    }
+    loadDay();
+  }, [customerId, loadDay]);
 
   useEffect(() => {
-    refreshToday();
-  }, []);
+    if (!customerId) return;
+    const sub = supabase
+      .channel(`dd-customer-${customerId}`)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'daily_deliveries',
+        filter: `customer_id=eq.${customerId}`,
+      }, () => loadDay())
+      .subscribe();
+    return () => { supabase.removeChannel(sub); };
+  }, [customerId, loadDay]);
 
-  const setTodayRow = (productId: string, patch: Partial<{ litersMorning: number; litersEvening: number }>) => {
-    setRows(prev => prev.map(r => (r.product.id === productId ? { ...r, ...patch } as any : r)));
-  };
+  const morning = useMemo(() => rows.find(r => r.shift === 'morning') || null, [rows]);
+  const evening = useMemo(() => rows.find(r => r.shift === 'evening') || null, [rows]);
 
-  const saveTodayRow = (productId: string) => {
-    const r = rows.find(x => x.product.id === productId);
-    if (!r) return;
-    setOverride(now, {
-      productId,
-      type: 'adjust',
-      litersMorning: r.litersMorning,
-      litersEvening: r.litersEvening,
-      date: '' as any,
-    } as any);
-    setSavedProductId(productId);
-    refreshToday();
-    setTimeout(() => setSavedProductId(null), 1000);
-  };
+  const agentName = useMemo(() => {
+    return morning?.delivery_agent_name || evening?.delivery_agent_name || '—';
+  }, [morning, evening]);
 
-  const skipTodayRow = (productId: string) => {
-    setOverride(now, { productId, type: 'skip', date: '' } as any);
-    refreshToday();
-  };
+  const agentPhone = useMemo(() => {
+    return morning?.delivery_agent_phone || evening?.delivery_agent_phone || '—';
+  }, [morning, evening]);
 
-  const resetTodayRow = (productId: string) => {
-    const latest = getSchedule();
-    const base = latest.lines.find(l => l.productId === productId);
-    setOverride(now, {
-      productId,
-      type: 'adjust',
-      litersMorning: base?.litersMorning ?? 0,
-      litersEvening: base?.litersEvening ?? 0,
-      date: '' as any,
-    } as any);
-    refreshToday();
-  };
-
-  
-
-  const placeOrderToday = () => {
-    // Save overrides for today based on selected slots
-    rows.forEach(r => {
-      setOverride(now, {
-        productId: r.product.id,
-        type: 'adjust',
-        litersMorning: slotAM ? (r.litersMorning || 0) : 0,
-        litersEvening: slotPM ? (r.litersEvening || 0) : 0,
-        date: '' as any,
-      } as any);
+  const today = useMemo(() => new Date(), []);
+  const calendarDays = useMemo(() => {
+    const start = new Date();
+    start.setDate(start.getDate() - 3);
+    return Array.from({ length: 7 }).map((_, idx) => {
+      const d = new Date(start);
+      d.setDate(start.getDate() + idx);
+      const isToday = d.toDateString() === today.toDateString();
+      return {
+        key: d.toISOString().slice(0, 10),
+        day: d.toLocaleDateString(undefined, { weekday: 'short' }).toUpperCase(),
+        date: d.getDate(),
+        isToday,
+      };
     });
-    refreshToday();
-    const placedTotal = rows.reduce((s, r) => {
-      const liters = (slotAM ? (r.litersMorning || 0) : 0) + (slotPM ? (r.litersEvening || 0) : 0);
-      return s + liters * priceFor(r.product.name);
-    }, 0);
-    setLastPlacedAmount(placedTotal);
-
-    // Build placed items list for display in table
-    const items = rows
-      .map((r, idx) => {
-        const liters = (slotAM ? (r.litersMorning || 0) : 0) + (slotPM ? (r.litersEvening || 0) : 0);
-        const price = priceFor(r.product.name);
-        const total = liters * price;
-        return { id: String(idx + 1), item: r.product.name, liter: liters, price, total };
-      })
-      .filter(x => x.liter > 0);
-    setPlacedItems(items);
-  };
-
-  // Placed purchases list
-  const months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-  const years = ['2022','2023','2024','2025'];
-
-  const goPrevMonth = () => {
-    const idx = months.indexOf(selectedMonth);
-    if (idx > 0) {
-      setSelectedMonth(months[idx - 1]);
-    } else {
-      const yIdx = years.indexOf(selectedYear);
-      if (yIdx > 0) {
-        setSelectedYear(years[yIdx - 1]);
-        setSelectedMonth(months[11]);
-      }
-    }
-  };
-
-  const goNextMonth = () => {
-    const idx = months.indexOf(selectedMonth);
-    if (idx < months.length - 1) {
-      setSelectedMonth(months[idx + 1]);
-    } else {
-      const yIdx = years.indexOf(selectedYear);
-      if (yIdx < years.length - 1) {
-        setSelectedYear(years[yIdx + 1]);
-        setSelectedMonth(months[0]);
-      }
-    }
-  };
+  }, [today]);
 
   return (
-    <View style={styles.container}>
-      <ScrollView contentContainerStyle={{ paddingBottom: 24 }}>
-      <View style={styles.card}>
-      {/* Month/Year selectors */}
-      <View style={styles.row}>
-        <TouchableOpacity style={styles.selector} onPress={() => setShowMonthPicker(true)}><Text>{selectedMonth} ▼</Text></TouchableOpacity>
-        <TouchableOpacity style={styles.selector} onPress={() => setShowYearPicker(true)}><Text>{selectedYear} ▼</Text></TouchableOpacity>
-      </View>
-      {/* User info */}
-      <View style={styles.userBox}>
-        <View style={styles.avatar} />
-        <View style={{flex:1}}>
-          <Text style={styles.userName}>{custName}</Text>
-          {!!custPhone && <Text style={styles.userLocation}>{custPhone}</Text>}
-        </View>
-        <TouchableOpacity style={styles.iconBtn}><Text>📋</Text></TouchableOpacity>
-      </View>
-      <View style={styles.todayCard}>
-        <View style={styles.todayHeaderRow}>
-          <Text style={styles.todayTitle}>Today's Order</Text>
-          <Text style={styles.dateBadge}>{headerDate}</Text>
-        </View>
-        <View style={styles.slotRow}>
-          <TouchableOpacity style={[styles.slotBtn, slotAM && styles.slotActive]} onPress={() => setSlotAM(s => !s)}><Text style={[styles.slotText, slotAM && styles.slotActiveText]}>Morning</Text></TouchableOpacity>
-          <TouchableOpacity style={[styles.slotBtn, slotPM && styles.slotActive]} onPress={() => setSlotPM(s => !s)}><Text style={[styles.slotText, slotPM && styles.slotActiveText]}>Evening</Text></TouchableOpacity>
-        </View>
-        <View style={styles.todayRows}>
-          {rows.map(r => (
-            <View key={r.product.id} style={styles.todayRow}>
-              <Text style={[styles.todayCell, {flex: 1.4}]}>{r.product.name}</Text>
-              {slotAM && (
-                <View style={{flexDirection:'row', alignItems:'center', gap: 6, flex: 1}}>
-                  <Text style={styles.todayCell}>AM</Text>
-                  <TextInput
-                    value={String(r.litersMorning ?? 0)}
-                    onChangeText={(t) => setTodayRow(r.product.id, { litersMorning: Number(t) || 0 })}
-                    keyboardType="numeric"
-                    style={styles.input}
-                  />
-                </View>
-              )}
-              {slotPM && (
-                <View style={{flexDirection:'row', alignItems:'center', gap: 6, flex: 1}}>
-                  <Text style={styles.todayCell}>PM</Text>
-                  <TextInput
-                    value={String(r.litersEvening ?? 0)}
-                    onChangeText={(t) => setTodayRow(r.product.id, { litersEvening: Number(t) || 0 })}
-                    keyboardType="numeric"
-                    style={styles.input}
-                  />
-                </View>
-              )}
-            </View>
-          ))}
-        </View>
-        <View style={styles.todayFooter}>
-          <Text style={styles.todayTotal}>{todayTotalLiters.toFixed(1)} L • ₹{todayTotalAmount.toFixed(0)}</Text>
-          <View style={{flexDirection:'row', gap: 8}}>
-            <TouchableOpacity style={styles.quickBtn} onPress={placeOrderToday} disabled={!slotAM && !slotPM}><Text style={styles.quickBtnText}>Place Order</Text></TouchableOpacity>
-            <TouchableOpacity style={styles.quickBtn} onPress={() => rows.forEach(r => skipTodayRow(r.product.id))}><Text style={styles.quickBtnText}>Skip All</Text></TouchableOpacity>
+    <View style={styles.screen}>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => {
+          setRefreshing(true);
+          await loadDay();
+          setRefreshing(false);
+        }} />}
+      >
+        <View style={styles.headerCard}>
+          <View style={styles.headerTopRow}>
+            <Text style={styles.menuIcon}>☰</Text>
+            <Text style={styles.appTitle}>Milk Wala</Text>
+            <View style={{ width: 24 }} />
           </View>
-        </View>
-      </View>
-      
-      {/* Wallet/Amount */}
-      <View style={styles.row}>
-        <View style={styles.amountBox}>
-          <Text style={styles.amountLabel}>Due Fees</Text>
-          <Text style={styles.amountValue}>₹170.00</Text>
-          <TouchableOpacity onPress={() => navigation.navigate('Payment')}><Text style={styles.link}>View</Text></TouchableOpacity>
-        </View>
-        <View style={styles.amountBox}>
-          <Text style={styles.amountLabel}>Today's Total</Text>
-          <Text style={styles.amountValue}>₹{(lastPlacedAmount || todayTotalAmount).toFixed(0)}</Text>
-          <TouchableOpacity onPress={() => navigation.navigate('Transactions')}><Text style={styles.link}>View</Text></TouchableOpacity>
-        </View>
-      </View>
-      {/* Purchases Table */}
-      <FlatList
-        data={placedItems}
-        keyExtractor={item => item.id}
-        scrollEnabled={false}
-        ListHeaderComponent={
-          <View style={styles.headerRow}>
-            <Text style={styles.headerCell}>#</Text>
-            <Text style={styles.headerCell}>ITEM</Text>
-            <Text style={styles.headerCell}>LITER</Text>
-            <Text style={styles.headerCell}>PRICE (₹)</Text>
-            <Text style={styles.headerCell}>TOTAL (₹)</Text>
-          </View>
-        }
-        renderItem={({item, index}) => (
-          <View style={styles.purchaseRow}>
-            <Text style={styles.purchaseCell}>{index + 1}</Text>
-            <Text style={styles.purchaseCell}>{item.item}</Text>
-            <Text style={styles.purchaseCell}>{item.liter}</Text>
-            <Text style={styles.purchaseCell}>₹{item.price}</Text>
-            <Text style={styles.purchaseCell}>₹{item.total}</Text>
-          </View>
-        )}
-        ListFooterComponent={<Text style={styles.finalTotal}>FINAL TOTAL  ₹{(placedItems.reduce((s, i) => s + i.total, 0)).toFixed(0)}</Text>}
-      />
-      {/* Action Buttons */}
-      <View style={styles.actionRow}>
-        <TouchableOpacity style={styles.actionBtn} onPress={() => navigation.navigate('Payment')}>
-          <Text style={{color:'#fff'}}>Pay Now</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.actionBtn} onPress={() => navigation.navigate('Payment')}>
-          <Text style={{color:'#fff'}}>Pay on Monthly Plan</Text>
-        </TouchableOpacity>
-      </View>
-      {/* Settings */}
-      <TouchableOpacity accessibilityRole="button" style={styles.settingsBox} onPress={() => navigation.navigate('Settings')}>
-        <Text style={styles.settingsTitle}>Settings</Text>
-        <Text style={styles.settingsSubtitle}>Language Change, Logout</Text>
-      </TouchableOpacity>
-      </View>
-      </ScrollView>
-      <Modal visible={showMonthPicker} transparent animationType="fade">
-        <View style={{flex:1, justifyContent:'center', alignItems:'center', backgroundColor:'rgba(0,0,0,0.3)'}}>
-          <View style={{backgroundColor:'#fff', borderRadius:10, padding:12, width:'80%', maxHeight:'60%'}}>
-            <ScrollView>
-              {months.map(m => (
-                <TouchableOpacity key={m} style={{paddingVertical:10}} onPress={() => { setSelectedMonth(m); setShowMonthPicker(false); }}>
-                  <Text style={{textAlign:'center', fontWeight: m===selectedMonth ? 'bold' : 'normal'}}>{m}</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-            <TouchableOpacity style={{marginTop:8, alignSelf:'center'}} onPress={() => setShowMonthPicker(false)}>
-              <Text>Close</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-      <Modal visible={showYearPicker} transparent animationType="fade">
-        <View style={{flex:1, justifyContent:'center', alignItems:'center', backgroundColor:'rgba(0,0,0,0.3)'}}>
-          <View style={{backgroundColor:'#fff', borderRadius:10, padding:12, width:'60%'}}>
-            {years.map(y => (
-              <TouchableOpacity key={y} style={{paddingVertical:10}} onPress={() => { setSelectedYear(y); setShowYearPicker(false); }}>
-                <Text style={{textAlign:'center', fontWeight: y===selectedYear ? 'bold' : 'normal'}}>{y}</Text>
-              </TouchableOpacity>
+          <View style={styles.calendarRow}>
+            {calendarDays.map((item) => (
+              <View key={item.key} style={[styles.calendarCell, item.isToday && styles.calendarCellActive]}>
+                <Text style={[styles.calendarDay, item.isToday && styles.calendarDayActive]}>{item.day}</Text>
+                <Text style={[styles.calendarDate, item.isToday && styles.calendarDateActive]}>{item.date}</Text>
+              </View>
             ))}
-            <TouchableOpacity style={{marginTop:8, alignSelf:'center'}} onPress={() => setShowYearPicker(false)}>
-              <Text>Close</Text>
-            </TouchableOpacity>
           </View>
+          <Text style={styles.headerDate}>{today.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}</Text>
         </View>
-      </Modal>
+
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Assigned Delivery Boy</Text>
+          <Text style={styles.cardValue}>{agentName}</Text>
+          <Text style={styles.cardSub}>{agentPhone}</Text>
+        </View>
+
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Today's Order</Text>
+          <View style={styles.shiftRow}>
+            <Text style={styles.shiftLabel}>Morning</Text>
+            <View style={styles.shiftDetail}>
+              <Text style={styles.shiftValue}>{Number(morning?.liters ?? 0).toFixed(1)} L</Text>
+              <Text style={[styles.shiftStatus, morning?.delivered ? styles.shiftStatusDone : styles.shiftStatusPending]}>
+                {morning?.delivered ? 'Delivered' : 'Pending'}
+              </Text>
+            </View>
+          </View>
+          {morning?.delivered_at ? (
+            <Text style={styles.shiftMeta}>Delivered at {new Date(morning.delivered_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Text>
+          ) : null}
+
+          <View style={[styles.shiftRow, { marginTop: 12 }]}>
+            <Text style={styles.shiftLabel}>Evening</Text>
+            <View style={styles.shiftDetail}>
+              <Text style={styles.shiftValue}>{Number(evening?.liters ?? 0).toFixed(1)} L</Text>
+              <Text style={[styles.shiftStatus, evening?.delivered ? styles.shiftStatusDone : styles.shiftStatusPending]}>
+                {evening?.delivered ? 'Delivered' : 'Pending'}
+              </Text>
+            </View>
+          </View>
+          {evening?.delivered_at ? (
+            <Text style={styles.shiftMeta}>Delivered at {new Date(evening.delivered_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Text>
+          ) : null}
+
+          {loading ? <ActivityIndicator style={{ marginTop: 12 }} /> : null}
+        </View>
+
+        <View style={styles.tileGrid}>
+          <MenuTile
+            label="My Orders"
+            icon="🧾"
+            onPress={() => navigation.navigate('My Orders')}
+          />
+          <MenuTile
+            label="Transactions"
+            icon="📊"
+            onPress={() => navigation.navigate('Transactions')}
+          />
+          <MenuTile
+            label="Payments"
+            icon="💵"
+            onPress={() => navigation.navigate('Payment')}
+          />
+        </View>
+      </ScrollView>
     </View>
   );
 }
 
+function MenuTile({ label, icon, onPress }: { label: string; icon: string; onPress: () => void }) {
+  return (
+    <TouchableOpacity accessibilityRole="button" style={styles.tile} onPress={onPress}>
+      <View style={styles.tileIconCircle}>
+        <Text style={styles.tileIcon}>{icon}</Text>
+      </View>
+      <Text style={styles.tileLabel}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
+
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff', padding: 16 },
-  card: { backgroundColor: '#fff', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: '#e5e7eb', marginBottom: 12, shadowColor: '#000', shadowOpacity: 0.05, shadowOffset: { width: 0, height: 2 }, shadowRadius: 6, elevation: 2 },
-  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  selector: { backgroundColor: '#fff', color: '#222', paddingVertical: 8, paddingHorizontal: 18, borderRadius: 6, fontWeight: 'bold', marginRight: 8, fontSize: 15, borderWidth: 1, borderColor: 'rgb(144, 238, 144)' },
-  userBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 10, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: 'rgb(144, 238, 144)' },
-  avatar: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#eee', marginRight: 12, borderWidth: 2, borderColor: 'rgb(144, 238, 144)' },
-  iconBtn: { padding: 10 },
-  userName: { fontWeight: 'bold', fontSize: 16 },
-  userLocation: { color: '#888' },
-  // Embedded Today & Schedule summary styles
-  todayCard: { backgroundColor: '#fff', borderRadius: 10, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: 'rgb(144, 238, 144)' },
-  todayHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
-  todayTitle: { fontWeight: 'bold', fontSize: 16, color: '#1b5e20' },
-  dateBadge: { backgroundColor: '#e8f5e9', color: '#1b5e20', borderColor: '#c8e6c9', borderWidth: 1, borderRadius: 8, paddingVertical: 4, paddingHorizontal: 8 },
-  todayRows: { marginTop: 6 },
-  todayRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6 },
-  todayCell: { color: '#1b5e20' },
-  todayFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 },
-  todayTotal: { fontWeight: 'bold', color: '#1b5e20' },
-  quickBtn: { backgroundColor: 'rgb(144, 238, 144)', borderRadius: 8, paddingVertical: 8, paddingHorizontal: 12 },
-  quickBtnText: { color: '#fff', fontWeight: 'bold' },
-  slotRow: { flexDirection: 'row', gap: 8, marginTop: 6 },
-  slotBtn: { flex: 1, alignItems: 'center', paddingVertical: 8, borderRadius: 10, borderWidth: 1, borderColor: '#c8e6c9' },
-  slotActive: { backgroundColor: 'rgb(144, 238, 144)', borderColor: 'rgb(144, 238, 144)' },
-  slotText: { color: '#1b5e20', fontWeight: '700' },
-  slotActiveText: { color: '#fff' },
-  input: { flex: 1, minWidth: 60, borderWidth: 1, borderColor: '#c8e6c9', borderRadius: 10, paddingVertical: 8, paddingHorizontal: 10, backgroundColor: '#f9fff9', color: '#1b5e20', textAlign: 'center' },
-  pauseBtn: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 18, borderWidth: 1, borderColor: '#c8e6c9' },
-  pauseBtnActive: { backgroundColor: '#ffb300', borderColor: '#ffb300' },
-  pauseText: { color: '#1b5e20', fontWeight: '700' },
-  pauseTextActive: { color: '#fff' },
-  amountBox: { flex: 1, backgroundColor: '#fff', borderRadius: 10, padding: 12, marginHorizontal: 4, alignItems: 'center', borderWidth: 1, borderColor: 'rgb(144, 238, 144)' },
-  amountLabel: { color: '#888', fontSize: 12 },
-  amountValue: { fontWeight: 'bold', fontSize: 18 },
-  link: { color: 'rgb(144, 238, 144)', fontSize: 12, marginTop: 4, fontWeight: 'bold' },
-  sectionTitle: { fontWeight: 'bold', fontSize: 14, marginVertical: 8 },
-  navRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
-  navBtn: { color: '#888', fontWeight: 'bold' },
-  headerRow: { flexDirection: 'row', justifyContent: 'space-between', backgroundColor: '#fff', borderRadius: 6, padding: 8, marginBottom: 6, borderWidth: 1, borderColor: '#e5e7eb' },
-  headerCell: { flex: 1, textAlign: 'center', fontWeight: 'bold', fontSize: 12, color: '#666' },
-  purchaseRow: { flexDirection: 'row', justifyContent: 'space-between', backgroundColor: '#fff', borderRadius: 8, padding: 8, marginBottom: 4, borderWidth: 1, borderColor: '#eef2f7' },
-  purchaseCell: { flex: 1, textAlign: 'center' },
-  finalTotal: { fontWeight: 'bold', textAlign: 'right', marginTop: 4, backgroundColor: '#eef2f7', padding: 8, borderRadius: 6 },
-  actionRow: { flexDirection: 'row', justifyContent: 'space-between', marginVertical: 12 },
-  actionBtn: { flex: 1, backgroundColor: 'rgb(144, 238, 144)', borderRadius: 22, marginHorizontal: 4, padding: 12, alignItems: 'center', elevation: 2 },
-  settingsBox: { marginTop: 20, backgroundColor: '#fff', borderRadius: 10, padding: 12, borderWidth: 1, borderColor: 'rgb(144, 238, 144)' },
-  settingsTitle: { fontWeight: 'bold', fontSize: 16 },
-  settingsSubtitle: { color: '#888', fontSize: 12 },
+  screen: { flex: 1, backgroundColor: '#e8f5e9' },
+  scroll: { flex: 1 },
+  scrollContent: { padding: 16, gap: 16 },
+  headerCard: { backgroundColor: '#90ee90', borderRadius: 16, paddingVertical: 18, paddingHorizontal: 16, shadowColor: '#000', shadowOpacity: 0.1, shadowOffset: { width: 0, height: 4 }, shadowRadius: 8, elevation: 3 },
+  headerTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  menuIcon: { fontSize: 20, color: '#fff', fontWeight: '700' },
+  appTitle: { color: '#fff', fontSize: 18, fontWeight: '700' },
+  calendarRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 16 },
+  calendarCell: { alignItems: 'center', padding: 8, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.25)', flex: 1, marginHorizontal: 4 },
+  calendarCellActive: { backgroundColor: '#fff' },
+  calendarDay: { color: '#f2fef2', fontWeight: '600', fontSize: 11 },
+  calendarDayActive: { color: '#90ee90' },
+  calendarDate: { marginTop: 4, color: '#f2fef2', fontWeight: '700', fontSize: 16 },
+  calendarDateActive: { color: '#90ee90' },
+  headerDate: { marginTop: 16, color: '#fff', fontWeight: '700', textAlign: 'center' },
+  card: { backgroundColor: '#fff', borderRadius: 16, padding: 16, shadowColor: '#000', shadowOpacity: 0.05, shadowOffset: { width: 0, height: 4 }, shadowRadius: 8, elevation: 2 },
+  cardTitle: { fontWeight: '700', fontSize: 16, color: '#90ee90', marginBottom: 4 },
+  cardValue: { fontSize: 15, fontWeight: '600', color: '#90ee90' },
+  cardSub: { color: '#4f4f4f', marginTop: 2 },
+  shiftRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 12 },
+  shiftLabel: { fontWeight: '600', color: '#1b5e20' },
+  shiftDetail: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  shiftValue: { fontWeight: '700', color: '#1b5e20' },
+  shiftStatus: { fontWeight: '600' },
+  shiftStatusDone: { color: '#2e7d32' },
+  shiftStatusPending: { color: '#a1a1a1' },
+  shiftMeta: { color: '#4f4f4f', marginTop: 4 },
+  tileGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, justifyContent: 'space-between' },
+  tile: { backgroundColor: '#fff', borderRadius: 16, paddingVertical: 18, alignItems: 'center', justifyContent: 'center', flexBasis: '30%', flexGrow: 1, borderWidth: 1, borderColor: '#c8e6c9', shadowColor: '#000', shadowOpacity: 0.04, shadowOffset: { width: 0, height: 2 }, shadowRadius: 4, elevation: 1 },
+  tileIconCircle: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#90ee90', alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
+  tileIcon: { fontSize: 22, color: '#fff' },
+  tileLabel: { fontWeight: '700', color: '#1b5e20' },
 });
