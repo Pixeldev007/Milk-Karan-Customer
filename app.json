@@ -9,7 +9,8 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.pixelperfect.milkkarancustomer"
     },
     "android": {
       "adaptiveIcon": {
@@ -20,7 +21,7 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.pixeldev007.MilkKaranCustomer"
+      "package": "com.pixelperfect.milkkarancustomer"
     },
     "web": {
       "output": "static",
@@ -39,7 +40,8 @@
             "backgroundColor": "#000000"
           }
         }
-      ]
+      ],
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true,
