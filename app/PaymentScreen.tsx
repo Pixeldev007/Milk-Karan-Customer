@@ -5,32 +5,7 @@ export default function PaymentScreen() {
   // Dummy data for UI only
   type MonthItem = { id: string; type: 'Cow' | 'Buffalo' | 'Goat'; liters: number; rate: number };
   type MonthPay = { id: string; month: string; items: MonthItem[]; total: number; paid: number; due: number };
-  const base: MonthPay[] = [
-    { id: '1', month: 'June 2022', items: [
-      { id: 'i1', type: 'Cow', liters: 10, rate: 80 },
-      { id: 'i2', type: 'Buffalo', liters: 5, rate: 90 },
-    ], total: 10*80 + 5*90, paid: 10*80 + 5*90, due: 0 },
-    { id: '2', month: 'July 2022', items: [
-      { id: 'i1', type: 'Cow', liters: 50, rate: 80 },
-      { id: 'i2', type: 'Buffalo', liters: 38, rate: 90 },
-      { id: 'i3', type: 'Goat', liters: 0.5, rate: 550 },
-    ], total: 50*80 + 38*90 + 0.5*550, paid: 50*80 + 38*90 + 0.5*550, due: 0 },
-    { id: '3', month: 'August 2022', items: [
-      { id: 'i1', type: 'Cow', liters: 10, rate: 80 },
-      { id: 'i2', type: 'Buffalo', liters: 10, rate: 90 },
-      { id: 'i3', type: 'Goat', liters: 1, rate: 550 },
-    ], total: 10*80 + 10*90 + 1*550, paid: 1440, due: (10*80 + 10*90 + 1*550) - 1440 },
-    { id: '4', month: 'September 2022', items: [
-      { id: 'i1', type: 'Cow', liters: 2, rate: 80 },
-    ], total: 2*80, paid: 0, due: 2*80 },
-    { id: '5', month: 'October 2022', items: [
-      { id: 'i1', type: 'Buffalo', liters: 2, rate: 90 },
-    ], total: 2*90, paid: 0, due: 2*90 },
-    { id: '6', month: 'January 2023', items: [
-      { id: 'i1', type: 'Cow', liters: 5, rate: 80 },
-      { id: 'i2', type: 'Goat', liters: 0.5, rate: 550 },
-    ], total: 5*80 + 0.5*550, paid: 540, due: (5*80 + 0.5*550) - 540 }
-  ];
+  const base: MonthPay[] = [];
 
   const monthNamesFull = ['January','February','March','April','May','June','July','August','September','October','November','December'];
   const now = new Date();
