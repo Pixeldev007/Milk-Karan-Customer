@@ -1,124 +1,269 @@
-import { useMemo } from 'react';
-import { FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { getCustomerId } from '@/lib/customers';
+import { getCustomerSession } from '@/lib/session';
+import { supabase } from '@/lib/supabase';
+import Constants from 'expo-constants';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { ActivityIndicator, Alert, FlatList, Linking, RefreshControl, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+
+type InvoiceRow = {
+  id: string;
+  number: string;
+  date: string | null;
+  status: string | null;
+  amount: number;
+  notes?: string | null;
+  pdf_url?: string | null;
+};
+
+const CUSTOMER_PAY_ENDPOINT =
+  (Constants.expoConfig?.extra as any)?.customerPayUrl ||
+  process.env.EXPO_PUBLIC_CUSTOMER_PAY_URL ||
+  '';
 
 export default function PaymentScreen() {
-  // Dummy data for UI only
-  type MonthItem = { id: string; type: 'Cow' | 'Buffalo' | 'Goat'; liters: number; rate: number };
-  type MonthPay = { id: string; month: string; items: MonthItem[]; total: number; paid: number; due: number };
-  const base: MonthPay[] = [];
+  const [customerId, setCustomerId] = useState<string | null>(null);
+  const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [payingId, setPayingId] = useState<string | null>(null);
 
-  const monthNamesFull = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-  const now = new Date();
-  const currentLabel = `${monthNamesFull[now.getMonth()]} ${now.getFullYear()}`;
-  const monthYearMatches = (label: string) => label === currentLabel;
-
-  // This Month only
-  const currentMonthList: MonthPay[] = useMemo(() => base.filter((p: MonthPay) => monthYearMatches(p.month)), []);
-
-  // Yearly history excluding current month, grouped by year
-  const yearsHistory = useMemo(() => {
-    const groups: Record<string, MonthPay[]> = {};
-    base.filter((p: MonthPay) => !monthYearMatches(p.month)).forEach((p: MonthPay) => {
-      const year = p.month.split(' ')[1];
-      if (!groups[year]) groups[year] = [];
-      groups[year].push(p);
-    });
-    return groups;
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const session = await getCustomerSession();
+      if (!mounted) return;
+      if (!session?.phone) {
+        setCustomerId(null);
+        return;
+      }
+      const id = await getCustomerId(session.name, session.phone);
+      if (mounted) setCustomerId(id);
+    })();
+    return () => {
+      mounted = false;
+    };
   }, []);
 
-  const totalTotal = currentMonthList.reduce((s: number, p: MonthPay) => s + p.total, 0);
-  const totalPaid = currentMonthList.reduce((s: number, p: MonthPay) => s + p.paid, 0);
-  const totalDue = currentMonthList.reduce((s: number, p: MonthPay) => s + p.due, 0);
+  const loadInvoices = useCallback(async () => {
+    if (!customerId) {
+      setInvoices([]);
+      return;
+    }
+    setLoading(true);
+    try {
+      const nowDate = new Date();
+      const year = nowDate.getFullYear();
+      const month = String(nowDate.getMonth() + 1).padStart(2, '0');
+      const monthStart = `${year}-${month}-01`;
+      const monthEnd = `${year}-${month}-31`;
 
-  const dayNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-  const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  const headerDate = `${dayNames[now.getDay()]}, ${String(now.getDate()).padStart(2,'0')} ${monthNames[now.getMonth()]} ${now.getFullYear()}`;
+      const { data, error } = await supabase
+        .from('invoices')
+        .select(
+          `id, invoice_number, issue_date, status, notes, pdf_url, invoice_items(line_total)`
+        )
+        .eq('customer_id', customerId)
+        .gte('issue_date', monthStart)
+        .lte('issue_date', monthEnd)
+        .order('issue_date', { ascending: false });
+      if (error) throw error;
+
+      const mapped: InvoiceRow[] = (data || []).map((inv: any) => {
+        const total = (inv.invoice_items || []).reduce(
+          (sum: number, it: any) => sum + Number(it?.line_total || 0),
+          0
+        );
+        return {
+          id: inv.id,
+          number: inv.invoice_number,
+          date: inv.issue_date,
+          status: inv.status,
+          amount: total,
+          notes: inv.notes ?? null,
+          pdf_url: inv.pdf_url ?? null,
+        };
+      });
+
+      const latestInvoice = mapped[0] || null;
+      setInvoices(latestInvoice ? [latestInvoice] : []);
+    } catch (e) {
+      console.error('loadInvoices error', e);
+      setInvoices([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [customerId]);
+
+  useEffect(() => {
+    if (!customerId) {
+      setInvoices([]);
+      return;
+    }
+    loadInvoices();
+  }, [customerId, loadInvoices]);
+
+  const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const now = useMemo(() => new Date(), []);
+  const headerDate = `${dayNames[now.getDay()]}, ${String(now.getDate()).padStart(2, '0')} ${monthNames[now.getMonth()]} ${now.getFullYear()}`;
+
+  const totals = useMemo(() => {
+    const total = invoices.reduce((s, inv) => s + inv.amount, 0);
+    const paid = invoices
+      .filter(inv => (inv.status || '').toLowerCase() === 'paid')
+      .reduce((s, inv) => s + inv.amount, 0);
+    const due = total - paid;
+    return { total, paid, due };
+  }, [invoices]);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await loadInvoices();
+    setRefreshing(false);
+  }, [loadInvoices]);
+
+  const handlePayNow = useCallback(
+    async (invoice: InvoiceRow) => {
+      if (!CUSTOMER_PAY_ENDPOINT) {
+        Alert.alert('Error', 'Payment endpoint is not configured.');
+        return;
+      }
+      setPayingId(invoice.id);
+      try {
+        const resp = await fetch(CUSTOMER_PAY_ENDPOINT, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            invoiceId: invoice.id,
+            amount: invoice.amount,
+          }),
+        });
+        const json = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+          throw new Error(json.error || 'Payment failed');
+        }
+        await loadInvoices();
+        Alert.alert('Success', 'Payment recorded successfully.');
+      } catch (e: any) {
+        Alert.alert('Error', e?.message || 'Payment failed');
+      } finally {
+        setPayingId(null);
+      }
+    },
+    [loadInvoices]
+  );
 
   return (
     <View style={styles.container}>
-      {/* Today card */}
       <View style={styles.todayCard}>
         <Text style={styles.todayDate}>{headerDate}</Text>
         <View style={styles.todayRow}>
           <View style={styles.todayBox}>
             <Text style={styles.todayLabel}>Total</Text>
-            <Text style={styles.todayValue}>{'\u20B9'}{totalTotal}</Text>
+            <Text style={styles.todayValue}>{'\u20B9'}{totals.total.toFixed(0)}</Text>
           </View>
           <View style={styles.todayBox}>
             <Text style={styles.todayLabel}>Paid</Text>
-            <Text style={styles.todayValue}>{'\u20B9'}{totalPaid}</Text>
+            <Text style={styles.todayValue}>{'\u20B9'}{totals.paid.toFixed(0)}</Text>
           </View>
           <View style={styles.todayBox}>
             <Text style={styles.todayLabel}>Due</Text>
-            <Text style={[styles.todayValue, {color: totalDue > 0 ? '#e53935' : '#01559d'}]}>{'\u20B9'}{totalDue}</Text>
+            <Text style={[styles.todayValue, { color: totals.due > 0 ? '#e53935' : '#01559d' }]}>{'\u20B9'}{totals.due.toFixed(0)}</Text>
           </View>
         </View>
       </View>
 
-      {/* This Month */}
-      <Text style={styles.sectionTitle}>This Month · {currentLabel}</Text>
+      <Text style={styles.sectionTitle}>Invoices</Text>
       <FlatList
-        data={currentMonthList}
+        data={invoices}
         keyExtractor={item => item.id}
-        renderItem={({item}) => (
-          <View style={styles.monthBox}>
-            <Text style={styles.monthTitle}>{item.month}</Text>
-            {item.items.map((it) => (
-              <View key={it.id} style={styles.monthRow}>
-                <Text style={styles.monthCell}>{it.type}</Text>
-                <Text style={styles.monthCellVal}>{it.liters} L × ₹{it.rate} = ₹{(it.liters * it.rate).toFixed(0)}</Text>
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
+        ListEmptyComponent={
+          loading ? (
+            <ActivityIndicator style={{ marginTop: 16 }} />
+          ) : (
+            <Text style={{ marginTop: 16, textAlign: 'center', color: '#4f4f4f' }}>
+              No invoices found.
+            </Text>
+          )
+        }
+        renderItem={({ item }) => {
+          const status = (item.status || '').toString();
+          const isPaid = status.toLowerCase() === 'paid';
+          const displayDate = item.date
+            ? new Date(item.date).toLocaleDateString(undefined, {
+                day: '2-digit',
+                month: 'short',
+                year: 'numeric',
+              })
+            : '-';
+          const isPaying = payingId === item.id;
+          return (
+            <View style={styles.monthBox}>
+              <Text style={styles.monthTitle}>{item.number || item.id}</Text>
+              <View style={styles.monthRow}>
+                <Text style={styles.monthCell}>Date</Text>
+                <Text style={styles.monthCellVal}>{displayDate}</Text>
               </View>
-            ))}
-            <View style={styles.monthRow}><Text style={styles.monthCell}>Total</Text><Text style={styles.monthCellVal}>{'\u20B9'}{item.total.toFixed(0)}</Text></View>
-            <View style={styles.monthRow}><Text style={styles.monthCell}>Paid</Text><Text style={styles.monthCellVal}>{'\u20B9'}{item.paid.toFixed(0)}</Text></View>
-            <View style={styles.monthRow}><Text style={styles.monthCell}>Due</Text><Text style={[styles.monthCellVal, {color: item.due > 0 ? '#e53935' : '#01559d'}]}>{'\u20B9'}{item.due.toFixed(0)}</Text></View>
-            {item.due > 0 && (
-              <TouchableOpacity style={[styles.payBtn, {backgroundColor: '#01559d'}]}>
-                <Text style={{color:'#fff'}}>PAY DUE</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        )}
+              <View style={styles.monthRow}>
+                <Text style={styles.monthCell}>Amount</Text>
+                <Text style={styles.monthCellVal}>{'\u20B9'}{item.amount.toFixed(0)}</Text>
+              </View>
+              <View style={styles.monthRow}>
+                <Text style={styles.monthCell}>Status</Text>
+                <Text style={styles.monthCellVal}>{status || '—'}</Text>
+              </View>
+              {!!item.notes && (
+                <View style={styles.monthRow}>
+                  <Text style={styles.monthCell}>Period</Text>
+                  <Text style={[styles.monthCellVal, { flex: 1, textAlign: 'right' }]} numberOfLines={2}>
+                    {item.notes}
+                  </Text>
+                </View>
+              )}
+              {!!item.pdf_url && (
+                <TouchableOpacity
+                  style={styles.pdfBtn}
+                  onPress={() => Linking.openURL(item.pdf_url as string)}
+                >
+                  <Text style={{ color: '#01559d', fontWeight: '600' }}>VIEW INVOICE PDF</Text>
+                </TouchableOpacity>
+              )}
+              {!isPaid && (
+                <TouchableOpacity
+                  style={styles.payBtn}
+                  disabled={isPaying}
+                  onPress={() => handlePayNow(item)}
+                >
+                  {isPaying ? (
+                    <ActivityIndicator color="#ffffff" />
+                  ) : (
+                    <Text style={{ color: '#fff' }}>PAY NOW</Text>
+                  )}
+                </TouchableOpacity>
+              )}
+            </View>
+          );
+        }}
         ListFooterComponent={
-          <View style={styles.summary}>
-            <Text style={styles.summaryText}>Total: {'\u20B9'}{totalTotal}</Text>
-            <Text style={styles.summaryText}>Paid: {'\u20B9'}{totalPaid}</Text>
-            <Text style={[styles.summaryText, {color: totalDue > 0 ? '#e53935' : '#1b5e20'}]}>Due: {'\u20B9'}{totalDue}</Text>
-          </View>
+          invoices.length > 0 ? (
+            <View style={styles.summary}>
+              <Text style={styles.summaryText}>Total: {'\u20B9'}{totals.total.toFixed(0)}</Text>
+              <Text style={styles.summaryText}>Paid: {'\u20B9'}{totals.paid.toFixed(0)}</Text>
+              <Text
+                style={[
+                  styles.summaryText,
+                  { color: totals.due > 0 ? '#e53935' : '#1b5e20' },
+                ]}
+              >
+                Due: {'\u20B9'}{totals.due.toFixed(0)}
+              </Text>
+            </View>
+          ) : null
         }
       />
-
-      {/* Years History */}
-      <Text style={[styles.sectionTitle, {marginTop: 10}]}>Years History</Text>
-      {Object.keys(yearsHistory).sort((a,b)=> Number(b)-Number(a)).map((year: string) => {
-        const list: MonthPay[] = yearsHistory[year];
-        if (!list || list.length === 0) return null;
-        const totals = list.reduce((acc: {t:number; p:number}, m: MonthPay) => { acc.t += m.total; acc.p += m.paid; return acc; }, {t:0, p:0});
-        return (
-          <View key={year} style={{marginBottom: 8}}>
-            <View style={styles.yearHeader}><Text style={styles.yearHeaderText}>{year}</Text><Text style={styles.yearHeaderTextSmall}>Total ₹{totals.t.toFixed(0)} • Paid ₹{totals.p.toFixed(0)} • Due ₹{(totals.t - totals.p).toFixed(0)}</Text></View>
-            {list.map((item: MonthPay) => (
-              <View key={item.id} style={styles.monthBox}>
-                <Text style={styles.monthTitle}>{item.month}</Text>
-                {item.items.map((it) => (
-                  <View key={it.id} style={styles.monthRow}>
-                    <Text style={styles.monthCell}>{it.type}</Text>
-                    <Text style={styles.monthCellVal}>{it.liters} L × ₹{it.rate} = ₹{(it.liters * it.rate).toFixed(0)}</Text>
-                  </View>
-                ))}
-                <View style={styles.monthRow}><Text style={styles.monthCell}>Total</Text><Text style={styles.monthCellVal}>{'\u20B9'}{item.total.toFixed(0)}</Text></View>
-                <View style={styles.monthRow}><Text style={styles.monthCell}>Paid</Text><Text style={styles.monthCellVal}>{'\u20B9'}{item.paid.toFixed(0)}</Text></View>
-                <View style={styles.monthRow}><Text style={styles.monthCell}>Due</Text><Text style={[styles.monthCellVal, {color: item.due > 0 ? '#e53935' : '#01559d'}]}>{'\u20B9'}{item.due.toFixed(0)}</Text></View>
-                {item.due > 0 && (
-                  <TouchableOpacity style={[styles.payBtn, {backgroundColor: '#01559d'}]}>
-                    <Text style={{color:'#fff'}}>PAY DUE</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-            ))}
-          </View>
-        );
-      })}
     </View>
   );
 }
@@ -139,7 +284,8 @@ const styles = StyleSheet.create({
   monthCellVal: { color: '#01559d', fontWeight: '700' },
   row: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#ffffff', borderRadius: 8, padding: 10, marginBottom: 6, borderWidth: 1, borderColor: '#bebebe' },
   cell: { flex: 1, textAlign: 'center', fontSize: 15 },
-  payBtn: { backgroundColor: '#01559d', borderRadius: 8, paddingVertical: 8, paddingHorizontal: 14, marginLeft: 6 },
+  pdfBtn: { marginTop: 6, paddingVertical: 6, alignItems: 'center' },
+  payBtn: { backgroundColor: '#01559d', borderRadius: 8, paddingVertical: 8, paddingHorizontal: 14, marginTop: 8, alignItems: 'center' },
   summary: { marginTop: 8, backgroundColor: '#ffffff', borderColor: '#bebebe', borderWidth: 1, borderRadius: 10, padding: 10, gap: 4 },
   summaryText: { color: '#01559d', fontWeight: '700' },
   yearHeader: { flexDirection: 'row', justifyContent:'space-between', alignItems:'center', marginBottom: 6 },
