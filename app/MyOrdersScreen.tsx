@@ -1,5 +1,5 @@
 import { getCustomerId } from '@/lib/customers';
-import { listCustomerDeliveries } from '@/lib/dailyDeliveries';
+import { listMyOrdersDetailed } from '@/lib/orders';
 import { getCustomerSession } from '@/lib/session';
 import { supabase } from '@/lib/supabase';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
@@ -21,7 +21,6 @@ export default function MyOrdersScreen() {
   const [loading, setLoading] = useState(false);
   const [customerId, setCustomerId] = useState<string | null>(null);
   const navigation = useNavigation<any>();
-  const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -36,12 +35,28 @@ export default function MyOrdersScreen() {
     if (!customerId) return;
     setLoading(true);
     try {
-      const data = await listCustomerDeliveries({ customerId, date: selectedDate });
-      setRows(data as any);
+      const today = new Date();
+      const from = new Date();
+      from.setDate(today.getDate() - 30);
+
+      const fromStr = from.toISOString().slice(0, 10);
+      const toStr = today.toISOString().slice(0, 10);
+
+      const data = await listMyOrdersDetailed(customerId, fromStr, toStr);
+      const mapped: OrderRow[] = data.map((r: any) => ({
+        date: r.date,
+        shift: (r.shift ?? '').toString().toLowerCase().includes('even') || (r.shift ?? '').toString().toLowerCase().includes('pm') ? 'evening' : 'morning',
+        liters: Number(r.liters ?? 0),
+        delivered: !!r.delivered,
+        delivered_at: r.deliveredAt ?? null,
+        delivery_agent_name: r.deliveryAgentName ?? null,
+        delivery_agent_phone: r.deliveryAgentPhone ?? null,
+      }));
+      setRows(mapped);
     } finally {
       setLoading(false);
     }
-  }, [customerId, selectedDate]);
+  }, [customerId]);
 
   useEffect(() => {
     loadOrders();
