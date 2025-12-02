@@ -1,3 +1,4 @@
+import { registerCustomerPushToken } from '@/lib/notifications';
 import { setCustomerSession } from '@/lib/session';
 import { supabase } from '@/lib/supabase';
 import { useNavigation } from '@react-navigation/native';
@@ -38,6 +39,7 @@ export default function Login() {
       }
       if (data === true) {
         await setCustomerSession({ name: trimmedName, phone: phoneDigits });
+        await registerCustomerPushToken(trimmedName, phoneDigits);
         navigation.reset({ index: 0, routes: [{ name: '(tabs)' }] });
       } else {
         Alert.alert('Invalid credentials', 'Name or phone number is incorrect.');
