@@ -46,6 +46,7 @@ export default function PaymentScreen() {
 
   const loadInvoices = useCallback(async () => {
     if (!customerId) {
+      console.log('PaymentScreen: no customerId yet');
       setInvoices([]);
       return;
     }
@@ -57,15 +58,20 @@ export default function PaymentScreen() {
       const monthStart = `${year}-${month}-01`;
       const monthEnd = `${year}-${month}-31`;
 
+      console.log('PaymentScreen customerId', customerId, { monthStart, monthEnd });
+
       const { data, error } = await supabase
         .from('invoices')
         .select(
-          `id, invoice_number, issue_date, status, notes, pdf_url, invoice_items(line_total)`
+          `id, invoice_number, issue_date, status, notes, invoice_items(line_total)`
         )
         .eq('customer_id', customerId)
         .gte('issue_date', monthStart)
         .lte('issue_date', monthEnd)
         .order('issue_date', { ascending: false });
+
+      console.log('PaymentScreen result', { data, error });
+
       if (error) throw error;
 
       const mapped: InvoiceRow[] = (data || []).map((inv: any) => {
@@ -124,27 +130,69 @@ export default function PaymentScreen() {
 
   const handlePayNow = useCallback(
     async (invoice: InvoiceRow) => {
-      if (!CUSTOMER_PAY_ENDPOINT) {
-        Alert.alert('Error', 'Payment endpoint is not configured.');
-        return;
-      }
       setPayingId(invoice.id);
       try {
-        const resp = await fetch(CUSTOMER_PAY_ENDPOINT, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            invoiceId: invoice.id,
-            amount: invoice.amount,
-          }),
-        });
-        const json = await resp.json().catch(() => ({}));
-        if (!resp.ok) {
-          throw new Error(json.error || 'Payment failed');
+        const { data: inv, error: invError } = await supabase
+          .from('invoices')
+          .select('owner_id, customer_id')
+          .eq('id', invoice.id)
+          .single();
+
+        if (invError) {
+          throw invError;
         }
+
+        const today = new Date().toISOString().slice(0, 10);
+
+        const paymentPayload = {
+          owner_id: (inv as any).owner_id,
+          customer_id: (inv as any).customer_id,
+          invoice_id: invoice.id,
+          amount: invoice.amount,
+          payment_date: today,
+          mode: 'Cash',
+        };
+
+        const { data: existingPayments, error: existingError } = await supabase
+          .from('payments')
+          .select('id')
+          .eq('invoice_id', invoice.id)
+          .limit(1);
+
+        if (existingError) {
+          console.error('PaymentScreen existing payments check error', existingError);
+          throw existingError;
+        }
+
+        if (!existingPayments || existingPayments.length === 0) {
+          console.log('PaymentScreen inserting payment', paymentPayload);
+
+          const { error: payError } = await supabase
+            .from('payments')
+            .insert(paymentPayload);
+
+          if (payError) {
+            console.error('PaymentScreen payments insert error', payError);
+            throw payError;
+          }
+        } else {
+          console.log('PaymentScreen payment already exists for invoice', invoice.id);
+        }
+
+        const { error: updateError } = await supabase
+          .from('invoices')
+          .update({ status: 'Paid' })
+          .eq('id', invoice.id);
+
+        if (updateError) {
+          console.error('PaymentScreen invoice update error', updateError);
+          throw updateError;
+        }
+
         await loadInvoices();
         Alert.alert('Success', 'Payment recorded successfully.');
       } catch (e: any) {
+        console.error('handlePayNow error', e);
         Alert.alert('Error', e?.message || 'Payment failed');
       } finally {
         setPayingId(null);

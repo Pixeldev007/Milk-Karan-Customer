@@ -1,16 +1,102 @@
-import { useMemo, useState } from 'react';
-import { FlatList, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { getCustomerId } from '@/lib/customers';
+import { getCustomerSession } from '@/lib/session';
+import { supabase } from '@/lib/supabase';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { ActivityIndicator, FlatList, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+
+type MonthItem = { id: string; type: 'Cow' | 'Buffalo' | 'Goat'; liters: number; rate: number };
+type MonthTxn = { id: string; month: string; items: MonthItem[]; purchased: number; paid: number };
 
 export default function TransactionsScreen() {
-  // Dummy data for UI only
-  type MonthItem = { id: string; type: 'Cow' | 'Buffalo' | 'Goat'; liters: number; rate: number };
-  type MonthTxn = { id: string; month: string; items: MonthItem[]; purchased: number; paid: number };
-  const base: MonthTxn[] = [];
+  const [customerId, setCustomerId] = useState<string | null>(null);
+  const [base, setBase] = useState<MonthTxn[]>([]);
+  const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState<'all' | 'paid' | 'due'>('all');
   const monthNamesFull = ['January','February','March','April','May','June','July','August','September','October','November','December'];
   const now = new Date();
   const currentLabel = `${monthNamesFull[now.getMonth()]} ${now.getFullYear()}`;
   const monthYearMatches = (label: string) => label === currentLabel;
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const session = await getCustomerSession();
+      if (!mounted) return;
+      if (!session?.phone) {
+        setCustomerId(null);
+        setBase([]);
+        return;
+      }
+      const id = await getCustomerId(session.name, session.phone);
+      if (!mounted) return;
+      setCustomerId(id);
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const loadTransactions = useCallback(async () => {
+    if (!customerId) {
+      setBase([]);
+      return;
+    }
+    setLoading(true);
+    try {
+      // 1) Load all invoices for this customer and sum their totals per month (Purchased)
+      const { data: invoices, error: invError } = await supabase
+        .from('invoices')
+        .select('id, issue_date, invoice_items(line_total)')
+        .eq('customer_id', customerId)
+        .order('issue_date', { ascending: false });
+      if (invError) throw invError;
+
+      const monthMap = new Map<string, MonthTxn>();
+
+      (invoices || []).forEach((inv: any) => {
+        const d = inv.issue_date ? new Date(inv.issue_date) : null;
+        if (!d || isNaN(d.getTime())) return;
+        const label = `${monthNamesFull[d.getMonth()]} ${d.getFullYear()}`;
+        const id = label;
+        const existing = monthMap.get(id) || { id, month: label, items: [], purchased: 0, paid: 0 };
+        const total = (inv.invoice_items || []).reduce(
+          (sum: number, it: any) => sum + Number(it?.line_total || 0),
+          0,
+        );
+        existing.purchased += total;
+        monthMap.set(id, existing);
+      });
+
+      // 2) Load payments for this customer and add them per month (Paid)
+      const { data: payments, error: payError } = await supabase
+        .from('payments')
+        .select('id, amount, payment_date')
+        .eq('customer_id', customerId)
+        .order('payment_date', { ascending: false });
+      if (payError) throw payError;
+
+      (payments || []).forEach((p: any) => {
+        const d = p.payment_date ? new Date(p.payment_date) : null;
+        if (!d || isNaN(d.getTime())) return;
+        const label = `${monthNamesFull[d.getMonth()]} ${d.getFullYear()}`;
+        const id = label;
+        const existing = monthMap.get(id) || { id, month: label, items: [], purchased: 0, paid: 0 };
+        existing.paid += Number(p.amount || 0);
+        monthMap.set(id, existing);
+      });
+
+      setBase(Array.from(monthMap.values()));
+    } catch (e) {
+      console.error('loadTransactions error', e);
+      setBase([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [customerId]);
+
+  useEffect(() => {
+    loadTransactions();
+  }, [loadTransactions]);
 
   // This Month (current month only)
   const currentMonthList: MonthTxn[] = useMemo(() => {
@@ -18,7 +104,7 @@ export default function TransactionsScreen() {
     if (filter === 'paid') list = list.filter((m: MonthTxn) => m.paid >= m.purchased);
     if (filter === 'due') list = list.filter((m: MonthTxn) => m.paid < m.purchased);
     return list;
-  }, [filter]);
+  }, [base, filter, currentLabel]);
 
   // Years history (exclude current month), grouped by year
   const yearsHistory = useMemo(() => {
@@ -76,28 +162,32 @@ export default function TransactionsScreen() {
         <TouchableOpacity onPress={() => setFilter('due')} style={[styles.filterBtn, filter==='due' && styles.filterActive]}><Text style={[styles.filterText, filter==='due' && styles.filterActiveText]}>Due</Text></TouchableOpacity>
       </View>
 
-      <FlatList
-        data={currentMonthList}
-        keyExtractor={item => item.id}
-        renderItem={({item}) => (
-          <View style={styles.monthBox}>
-            <Text style={styles.monthTitle}>{item.month}</Text>
-            <View style={styles.monthRow}>
-              <Text style={styles.monthCell}>Purchased</Text>
-              <Text style={styles.monthCellVal}>{'\u20B9'}{item.purchased}</Text>
+      {loading && currentMonthList.length === 0 ? (
+        <ActivityIndicator style={{ marginTop: 8 }} />
+      ) : (
+        <FlatList
+          data={currentMonthList}
+          keyExtractor={item => item.id}
+          renderItem={({item}) => (
+            <View style={styles.monthBox}>
+              <Text style={styles.monthTitle}>{item.month}</Text>
+              <View style={styles.monthRow}>
+                <Text style={styles.monthCell}>Purchased</Text>
+                <Text style={styles.monthCellVal}>{'\u20B9'}{item.purchased.toFixed(0)}</Text>
+              </View>
+              <View style={styles.monthRow}>
+                <Text style={styles.monthCell}>Paid</Text>
+                <Text style={styles.monthCellVal}>{'\u20B9'}{item.paid.toFixed(0)}</Text>
+              </View>
+              <View style={styles.monthRow}>
+                <Text style={styles.monthCell}>Due</Text>
+                <Text style={[styles.monthCellVal, {color: (item.purchased-item.paid) > 0 ? '#e53935' : '#4caf50'}]}>{'\u20B9'}{(item.purchased - item.paid).toFixed(0)}</Text>
+              </View>
             </View>
-            <View style={styles.monthRow}>
-              <Text style={styles.monthCell}>Paid</Text>
-              <Text style={styles.monthCellVal}>{'\u20B9'}{item.paid}</Text>
-            </View>
-            <View style={styles.monthRow}>
-              <Text style={styles.monthCell}>Due</Text>
-              <Text style={[styles.monthCellVal, {color: (item.purchased-item.paid) > 0 ? '#e53935' : '#4caf50'}]}>{'\u20B9'}{item.purchased - item.paid}</Text>
-            </View>
-          </View>
-        )}
-        scrollEnabled={false}
-      />
+          )}
+          scrollEnabled={false}
+        />
+      )}
 
       {/* Years History */}
       <Text style={[styles.sectionTitle, {marginTop: 10}]}>Years History</Text>
