@@ -1,4 +1,4 @@
-import { getCustomerSession } from '@/lib/session';
+import { clearCustomerSession, getCustomerSession } from '@/lib/session';
 import { AntDesign, Feather } from '@expo/vector-icons';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { DrawerContentScrollView } from '@react-navigation/drawer';
@@ -84,7 +84,8 @@ export default function CustomDrawerContent(props: DrawerContentComponentProps) 
           </View>
           <Feather name="chevron-right" size={20} color="rgb(76, 175, 80)" />
         </TouchableOpacity>
-        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Logout" style={[styles.menuItem]} onPress={() => {
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Logout" style={[styles.menuItem]} onPress={async () => {
+          await clearCustomerSession();
           navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
         }}>
           <View style={styles.menuLeft}>

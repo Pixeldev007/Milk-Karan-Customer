@@ -24,3 +24,12 @@ export async function getCustomerSession(): Promise<CustomerSession | null> {
     return null;
   }
 }
+
+export async function clearCustomerSession() {
+  try {
+    const { default: AsyncStorage } = await import('@react-native-async-storage/async-storage');
+    await AsyncStorage.removeItem(STORAGE_KEY);
+  } catch (e) {
+    // no-op
+  }
+}

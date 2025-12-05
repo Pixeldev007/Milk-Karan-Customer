@@ -1,6 +1,9 @@
+import { clearCustomerSession } from '@/lib/session';
+import { useNavigation } from '@react-navigation/native';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 export default function SettingsScreen() {
+  const navigation = useNavigation<any>();
   return (
     <View style={styles.container}>
       <TouchableOpacity style={styles.item}>
@@ -15,7 +18,13 @@ export default function SettingsScreen() {
         <Text style={styles.icon}>📄</Text>
         <Text style={styles.text}>Terms And Conditions</Text>
       </TouchableOpacity>
-      <TouchableOpacity style={styles.item}>
+      <TouchableOpacity
+        style={styles.item}
+        onPress={async () => {
+          await clearCustomerSession();
+          navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
+        }}
+      >
         <Text style={styles.icon}>🚪</Text>
         <Text style={styles.text}>Logout</Text>
       </TouchableOpacity>
